@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
-"""Allo: the agent router for maximizing usage. Plans which AI plan should take which job before limits reset.
+"""Allo Router: the agent router for maximizing usage. Plans which AI plan should take which job before limits reset.
 
 Reads pools.json and tasks.json from the directory you point it at (default: current directory).
 Read-only by default. It never calls a network, never sends anything and never starts a job.
 Unknown readings are printed as unknown, not guessed.
 
-  allo.py                      print the plan
-  allo.py set <pool> pct=40    update a reading (also usd=, reset=ISO-UTC, note=)
-  allo.py init                 write a sample pools.json and tasks.json (dates relative to now)
-  allo.py --dir examples       use another folder
+  allo-router                      print the plan
+  allo-router set <pool> pct=40    update a reading (also usd=, reset=ISO-UTC, note=)
+  allo-router init                 write a sample pools.json and tasks.json (dates relative to now)
+  allo-router --dir examples       use another folder
 """
 import json
 import sys
@@ -255,7 +255,7 @@ def cmd_init(here):
         if target.exists():
             sys.exit(f"{target} already exists; not overwriting")
         target.write_text(json.dumps(data, indent=2))
-    print("wrote pools.json and tasks.json. Edit them to match your plans, then run: allo")
+    print("wrote pools.json and tasks.json. Edit them to match your plans, then run: allo-router")
 
 
 def main(argv):

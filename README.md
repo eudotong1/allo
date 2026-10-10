@@ -1,6 +1,6 @@
-# Allo
+# Allo Router
 
-The agent router for maximizing usage.
+The agent router for maximizing usage. Site: https://allorouter.com
 
 You pay for several AI plans. Each has its own weekly limit and its own reset time. Some capacity goes unused while another plan runs dry. This tool tells you which plan should take which job before the next reset.
 
@@ -10,9 +10,11 @@ It is a planner. It reads two JSON files you keep, prints a proposal, and stops.
 Needs Python 3.9 or newer. No dependencies. Install with `pip install .` from this folder (not on PyPI yet), or run `python3 allo.py` directly.
 
     mkdir my-router && cd my-router
-    python3 allo init     # writes pools.json and tasks.json
-    python3 allo          # prints the plan
-    python3 allo set chatgpt pct=55    # record a fresh reading
+    allo-router init                   # writes pools.json and tasks.json
+    allo-router                        # prints the plan
+    allo-router set chatgpt pct=55     # record a fresh reading
+
+Without installing, replace `allo-router` with `python3 /path/to/allo.py`.
 
 ## What you put in
 - `pools.json`: one entry per plan. Subscriptions carry `remaining_pct`. API credit carries `remaining_usd`. Each has `resets_at` (UTC) and the data `tiers` it may touch.
