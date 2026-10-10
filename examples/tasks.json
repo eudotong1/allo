@@ -1,0 +1,6 @@
+{"tasks": [
+  {"id": 1, "name": "Weekly newsletter drafts", "tier": "public", "est_usd": 20, "needs": ["api"], "priority": 1},
+  {"id": 2, "name": "Summarize customer interview notes", "tier": "private", "est_usd": 15, "needs": ["api"], "priority": 2},
+  {"id": 3, "name": "Refactor the pricing page", "tier": "public", "est_usd": 0, "needs": [], "priority": 3},
+  {"id": 4, "name": "Review contract redlines", "tier": "private", "est_usd": 500, "needs": ["api"], "priority": 4}
+]}

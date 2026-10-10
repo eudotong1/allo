@@ -1,0 +1,18 @@
+[project]
+name = "allo"
+version = "0.1.0"
+description = "Allo: the agent router for maximizing usage. Plans which AI plan should take which job before limits reset."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { file = "LICENSE" }
+dependencies = []
+
+[project.scripts]
+allo = "allo:cli"
+
+[tool.setuptools]
+py-modules = ["allo"]
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
