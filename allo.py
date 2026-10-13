@@ -123,7 +123,16 @@ STARTER_TASKS = {
 
 
 def parse(ts):
-    return datetime.fromisoformat(ts.replace("Z", "+00:00")) if ts else None
+    """ISO timestamp with a zone ("Z" or an offset). Times are UTC, so a bare timestamp is rejected, not guessed."""
+    if not ts:
+        return None
+    try:
+        d = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+    except ValueError:
+        raise SystemExit(f"bad timestamp {ts!r}; use ISO format with a zone, e.g. 2026-10-16T20:00:00Z")
+    if d.tzinfo is None:
+        raise SystemExit(f"timestamp {ts!r} has no zone; add Z for UTC, e.g. {ts}Z")
+    return d
 
 
 def hours(a, b):
@@ -168,17 +177,28 @@ def propose(tasks, rows, tiers, opts):
     reserve = opts.get("credit_reserve", 0.10)
     min_headroom = opts.get("min_headroom_pct", 20)
     sub_max_tier = opts.get("subscription_max_tier", tiers[-1])
+    for r in rows:
+        for x in r["p"]["tiers"]:
+            if x not in rank:
+                raise SystemExit(f"pool {r['p']['id']}: tier {x!r} is not in tiers {tiers}")
     credit = next((r for r in rows if r["p"]["kind"] == "credit_usd"), None)
     budget = (credit["left"] or 0) * (1 - reserve) if credit else 0
     out = []
     for t in sorted(tasks, key=lambda t: t["priority"]):
         if t["tier"] not in rank:
             raise SystemExit(f"task {t['id']}: tier {t['tier']!r} is not in tiers {tiers}")
+        if t["est_usd"] < 0:
+            raise SystemExit(f"task {t['id']}: est_usd {t['est_usd']} is negative")
         elig = [r["p"]["id"] for r in rows
                 if rank[t["tier"]] <= max(rank[x] for x in r["p"]["tiers"])]
-        if credit and "api" in t.get("needs", []) and t["est_usd"] <= budget and credit["p"]["id"] in elig:
-            budget -= t["est_usd"]
-            out.append((t, credit["p"]["id"], elig))
+        if "api" in t.get("needs", []):
+            # An API job can only run on API credit. If the credit pool is missing, unread, too small or
+            # not tier-eligible, the job stays unassigned instead of landing on a subscription.
+            if credit and credit["left"] is not None and t["est_usd"] <= budget and credit["p"]["id"] in elig:
+                budget -= t["est_usd"]
+                out.append((t, credit["p"]["id"], elig))
+            else:
+                out.append((t, None, elig))
             continue
         cand = [r for r in rows if r["p"]["id"] in elig and r["p"]["kind"] != "credit_usd"
                 and rank[t["tier"]] <= rank[sub_max_tier] and (r["left"] is None or r["left"] >= min_headroom)]
@@ -222,17 +242,30 @@ def render(here, now):
 
 
 def cmd_set(here, args):
-    pid, kv = args[0], dict(a.split("=", 1) for a in args[1:])
+    if not args:
+        sys.exit("usage: allo-router set <pool> pct=40 | usd=200 | reset=ISO-UTC | note=text")
+    pid = args[0]
+    if any("=" not in a for a in args[1:]):
+        sys.exit("expected key=value pairs, e.g. pct=40")
+    kv = dict(a.split("=", 1) for a in args[1:])
+    unknown = sorted(set(kv) - {"pct", "usd", "reset", "note"})
+    if unknown or not kv:
+        sys.exit("unknown key(s): " + (", ".join(unknown) or "none given") + "; use pct=, usd=, reset= or note=")
+    try:
+        nums = {k: float(kv[k]) for k in ("pct", "usd") if k in kv}
+    except ValueError:
+        sys.exit("pct= and usd= need a number")
+    if "reset" in kv:
+        parse(kv["reset"])
     cfg = json.loads((here / "pools.json").read_text())
     p = next((x for x in cfg["pools"] if x["id"] == pid), None)
     if not p:
         sys.exit("unknown pool; ids: " + ", ".join(x["id"] for x in cfg["pools"]))
-    if "pct" in kv:
-        p["remaining_pct"] = float(kv["pct"])
-    if "usd" in kv:
-        p["remaining_usd"] = float(kv["usd"])
+    if "pct" in nums:
+        p["remaining_pct"] = nums["pct"]
+    if "usd" in nums:
+        p["remaining_usd"] = nums["usd"]
     if "reset" in kv:
-        parse(kv["reset"])
         p["resets_at"] = kv["reset"]
     if "note" in kv:
         p["source"] = kv["note"]
@@ -250,26 +283,37 @@ def cmd_init(here):
     for p, (reset, seen) in zip(cfg["pools"], [(1, 0), (5, None), (3, 0), (7, 0)]):
         p["resets_at"] = iso(reset)
         p["updated_at"] = iso(seen) if seen is not None else None
-    for name, data in (("pools.json", cfg), ("tasks.json", STARTER_TASKS)):
-        target = here / name
-        if target.exists():
-            sys.exit(f"{target} already exists; not overwriting")
-        target.write_text(json.dumps(data, indent=2))
+    files = (("pools.json", cfg), ("tasks.json", STARTER_TASKS))
+    for name, _ in files:
+        if (here / name).exists():
+            sys.exit(f"{here / name} already exists; not overwriting")
+    for name, data in files:
+        (here / name).write_text(json.dumps(data, indent=2))
     print("wrote pools.json and tasks.json. Edit them to match your plans, then run: allo-router")
 
 
 def main(argv):
+    if "-h" in argv or "--help" in argv:
+        print(__doc__)
+        return
     here = Path(".")
     if "--dir" in argv:
         i = argv.index("--dir")
+        if i + 1 >= len(argv):
+            sys.exit("--dir needs a folder")
         here = Path(argv[i + 1])
         argv = argv[:i] + argv[i + 2:]
-    if argv and argv[0] == "init":
-        cmd_init(here)
-    elif argv and argv[0] == "set":
-        cmd_set(here, argv[1:])
-    else:
-        print(render(here, datetime.now(timezone.utc)))
+    try:
+        if argv and argv[0] == "init":
+            cmd_init(here)
+        elif argv and argv[0] == "set":
+            cmd_set(here, argv[1:])
+        else:
+            print(render(here, datetime.now(timezone.utc)))
+    except FileNotFoundError as e:
+        sys.exit(f"{Path(e.filename).name} not found in {here.resolve()}; run `allo-router init` to write a starter, or use --dir")
+    except json.JSONDecodeError as e:
+        sys.exit(f"could not read the JSON file: {e}")
 
 
 def cli():
