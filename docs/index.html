@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Allo Router</title>
+  <meta name="description" content="Allo Router plans which AI plan should take which job before limits reset. It prints a proposal and does not run the jobs.">
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #1c1915;
+      --muted: #5e584e;
+      --paper: #f6f3ec;
+      --line: #e2dbd0;
+      --link: #0c3f52;
+      --code: #231f1b;
+      --code-ink: #f6f3ec;
+    }
+    * { box-sizing: border-box; }
+    html { background: var(--paper); }
+    body {
+      margin: 0;
+      color: var(--ink);
+      font: 1.0625rem/1.6 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+    }
+    main {
+      max-width: 40rem;
+      margin: 0 auto;
+      padding: 4.5rem 1.25rem 5rem;
+    }
+    h1 {
+      margin: 0 0 0.85rem;
+      font-size: 2rem;
+      font-weight: 650;
+      letter-spacing: -0.03em;
+      line-height: 1.15;
+    }
+    h2 {
+      margin: 2.4rem 0 0.55rem;
+      font-size: 1.05rem;
+      font-weight: 650;
+    }
+    p { margin: 0.8rem 0; }
+    .lead {
+      font-size: 1.2rem;
+      line-height: 1.45;
+    }
+    a { color: var(--link); }
+    code, pre {
+      font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+    }
+    p code {
+      font-size: 0.92em;
+    }
+    pre {
+      margin: 1rem 0;
+      padding: 1rem 1.1rem;
+      overflow-x: auto;
+      color: var(--code-ink);
+      background: var(--code);
+      border-radius: 8px;
+      line-height: 1.5;
+    }
+    pre code { font-size: 0.86rem; }
+    .foot {
+      margin-top: 2.4rem;
+      padding-top: 1.1rem;
+      border-top: 1px solid var(--line);
+      color: var(--muted);
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Allo Router</h1>
+    <p class="lead">Allo Router plans which AI plan should take which job before limits reset. It prints a proposal. It does not run the jobs.</p>
+    <p>If you pay for more than one AI plan, each one has its own limit and its own reset. Capacity on one can expire while another has already run out. You list your plans, what is left, when each resets, and your jobs. Allo Router ranks the plans by how much is left against how soon each resets, and tells you where each job should go first: the plan closest to expiring that can still take it.</p>
+    <p>It reads two files you keep. One is your plans: what is left, when each resets, and which kinds of data each may touch. The other is your jobs. You type the readings in. A reading older than 24 hours is flagged. You start the jobs yourself.</p>
+    <p>It does not call a plan, log in, send anything, or make a network request. Nothing is started for you.</p>
+
+    <h2>Install</h2>
+    <p>Needs Python 3.9 or newer. No dependencies. Install with <code>pip install .</code> from a checkout of the repository (not on PyPI yet), or run <code>python3 allo.py</code> directly.</p>
+    <pre><code>mkdir my-router &amp;&amp; cd my-router
+allo-router init                   # writes pools.json and tasks.json
+allo-router                        # prints the plan
+allo-router set &lt;pool&gt; pct=55      # record a fresh reading</code></pre>
+    <p>Without installing, replace <code>allo-router</code> with <code>python3 /path/to/allo.py</code>.</p>
+
+    <p class="foot">Free and MIT licensed. Source: <a href="https://github.com/eudotong1/allo">github.com/eudotong1/allo</a>.</p>
+  </main>
+</body>
+</html>

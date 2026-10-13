@@ -70,3 +70,55 @@ def test_init_writes_starter_files_and_refuses_to_overwrite(tmp_path):
 def test_examples_folder_matches_the_built_in_starter():
     assert json.loads((ROOT / "examples/tasks.json").read_text()) == planner.STARTER_TASKS
     assert json.loads((ROOT / "examples/pools.json").read_text()) == planner.STARTER_POOLS
+
+
+def test_api_job_stays_unassigned_when_credit_cannot_take_it():
+    overflow = plan([task(1, "public", 170, ["api"], 1), task(2, "public", 20, ["api"], 2)])
+    assert overflow[1] == "api_credit"
+    assert overflow[2] is None
+    pools = [p for p in json.loads((ROOT / "examples/pools.json").read_text())["pools"] if p["kind"] != "credit_usd"]
+    assert plan([task(1, "public", 10, ["api"], 1)], pools)[1] is None
+
+
+def test_bad_timestamps_and_estimates_are_rejected():
+    assert planner.parse("2026-10-16T20:00:00Z") == datetime(2026, 10, 16, 20, tzinfo=timezone.utc)
+    for bad in ("2026-10-16T20:00:00", "tomorrow"):
+        try:
+            planner.parse(bad)
+            assert False
+        except SystemExit as e:
+            assert bad in str(e)
+    try:
+        plan([task(1, "public", -1, [], 1)])
+        assert False
+    except SystemExit as e:
+        assert "negative" in str(e)
+    pools = json.loads((ROOT / "examples/pools.json").read_text())["pools"]
+    pools[0] = dict(pools[0], tiers=["nope"])
+    try:
+        plan([task(1, "public", 0, [], 1)], pools)
+        assert False
+    except SystemExit as e:
+        assert "not in tiers" in str(e)
+
+
+def test_set_and_init_refuse_bad_input(tmp_path):
+    for n in ("pools.json", "tasks.json"):
+        (tmp_path / n).write_text((ROOT / "examples" / n).read_text())
+    cmd = [sys.executable, str(ROOT / "allo.py")]
+    bad = subprocess.run(cmd + ["--dir", str(tmp_path), "set", "chatgpt", "percent=55"], capture_output=True, text=True)
+    assert bad.returncode != 0 and "unknown key" in bad.stderr
+    bare = subprocess.run(cmd + ["--dir", str(tmp_path), "set", "chatgpt", "reset=2026-10-16T20:00:00"], capture_output=True, text=True)
+    assert bare.returncode != 0 and "no zone" in bare.stderr
+    help_out = subprocess.run(cmd + ["--help"], capture_output=True, text=True)
+    assert help_out.returncode == 0 and "allo-router" in help_out.stdout
+    occupied = tmp_path / "occupied"
+    occupied.mkdir()
+    (occupied / "tasks.json").write_text("{}\n")
+    init = subprocess.run(cmd + ["--dir", str(occupied), "init"], capture_output=True, text=True)
+    assert init.returncode != 0 and "already exists" in init.stderr
+    assert not (occupied / "pools.json").exists()
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    missing = subprocess.run(cmd + ["--dir", str(empty)], capture_output=True, text=True)
+    assert missing.returncode != 0 and "pools.json" in missing.stderr and "init" in missing.stderr
