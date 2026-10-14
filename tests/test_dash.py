@@ -100,6 +100,7 @@ def test_finds_only_agents_that_run_allo_router_on_this_folder(tmp_path):
     plist(agents, "mine", ["/bin/allo-router", "--dir", str(here.resolve()), "run", "--plan", "p.json", "--execute",
                            "--yes", "--max-plan-age", "300"])
     plist(agents, "other-folder", ["/bin/allo-router", "--dir", "/somewhere/else", "run"])
+    plist(agents, "sibling-folder", ["/bin/allo-router", "--dir", str(here.resolve()) + "2", "run"])
     plist(agents, "not-allo", ["/bin/backup", str(here.resolve())])
     (agents / "broken.plist").write_text("not a plist")
     (found,) = allo_dash.find_agents(here, agents)
@@ -139,7 +140,7 @@ def test_evening_plan_without_refresh_is_flagged_before_the_night_run_refuses_it
     s = state(tmp_path, agents=[agent()])
     assert s["schedule"]["next_run"] == "2099-01-04T03:00:00Z"
     assert s["plan"]["ready_for_next_run"] is False and s["level"] == "attention"
-    assert any("Next scheduled run will refuse" in i for i in s["issues"])
+    assert any("next scheduled run will refuse plan.json: it is older than 300 minutes" in i for i in s["issues"])
 
 
 def test_evening_plan_with_a_refresh_step_is_ready_while_the_review_is_recent(tmp_path):

@@ -140,10 +140,11 @@ def find_agents(here, agents_dir=LAUNCH_AGENTS):
         text = " ".join(args)
         if "allo-router" not in text and "allo.py" not in text:
             continue
-        if target not in text and str(pl.get("WorkingDirectory", "")) != target:
-            continue
         # A wrapper such as /bin/sh -c "allo-router ... && allo-router ..." keeps its commands in one string.
         words = text.split()
+        if not any(w == target or w.startswith(target + "/") for w in words) \
+                and str(pl.get("WorkingDirectory", "")) != target:
+            continue
         found.append({"label": pl.get("Label", path.stem), "path": str(path), "args": args,
                       "calendar": pl.get("StartCalendarInterval"), "log": pl.get("StandardOutPath"),
                       "executes": "--execute" in words, "refreshes": "--refresh" in words,
@@ -252,12 +253,13 @@ def plan_state(here, cfg, tasks, now, schedule):
             s["review_expires_at"] = iso(limit)
             s["ready_for_next_run"] = limit >= nxt
             s["ready_text"] = (f"reviewed {s['reviewed_at']}; the scheduled refresh re-checks it on fresh readings"
-                               if s["ready_for_next_run"] else "the review will be too old by the next run; "
-                               "preview and review again before it")
+                               if s["ready_for_next_run"] else
+                               f"reviewed more than {schedule.get('max_review_age') or allo_exec.DEFAULT_REVIEW_AGE_MIN:g} "
+                               "minutes before it")
         else:
             s["ready_for_next_run"] = created + timedelta(minutes=max_age) >= nxt
             s["ready_text"] = ("saved recently enough for the next run" if s["ready_for_next_run"] else
-                               f"older than {max_age:g} minutes by the next run, so that run will refuse it")
+                               f"older than {max_age:g} minutes by then")
     return s
 
 
@@ -364,7 +366,8 @@ def health(state):
         elif plan.get("error"):
             issues.append(f"plan.json cannot be used: {plan['error']}")
         elif plan.get("ready_for_next_run") is False:
-            issues.append(f"Next scheduled run will refuse: plan.json is {plan['ready_text']}.")
+            issues.append(f"The next scheduled run will refuse plan.json: it is {plan['ready_text']}. "
+                          "Preview and review a new plan before then.")
     last = (state["history"] or {}).get("last")
     if last and last["status"] in allo_report.FAILED:
         issues.append(f"Last job #{last['task_id']} {last['status']} on {last['pool']}.")

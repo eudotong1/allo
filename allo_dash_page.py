@@ -361,6 +361,7 @@ function jobRow(r, now, pal, cls) {
   const resCls = r.status === "ok" ? "" : ["failed", "timeout", "error"].includes(r.status) || (r.misroute && r.misroute.length) ? "bad" : r.status === "running" ? "ok-text" : "dim";
   let note = "";
   if (r.status === "skipped" && r.reason) note = `<span class="note">${esc(r.reason)}</span>`;
+  else if (r.misroute && r.misroute.length && r.status !== "queued") note = `<span class="note">Misroute: ${esc(r.misroute.join("; "))}</span>`;
   const used = r.plan_used_pts != null ? `${r.plan_used_pts} pts` : r.status === "running" ? "after it ends" : "";
   return `<tr class="${cls || ""}"><td class="when">${r.whenText}</td><td class="job"><b>#${esc(r.task_id)}</b>${esc(r.name)}${note}</td>
     <td class="plan">${plan}</td><td class="res ${resCls}">${res}</td><td class="num">${r.seconds != null ? clock(r.seconds) : ""}</td>
