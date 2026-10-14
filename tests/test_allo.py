@@ -209,3 +209,10 @@ def test_planner_module_never_imports_process_or_network_code():
     src = (ROOT / "allo.py").read_text()
     for mod in ("subprocess", "socket", "urllib", "http", "os.system"):
         assert f"import {mod}" not in src and f"{mod}." not in src
+
+
+def test_version_is_the_same_everywhere():
+    import re
+    assert re.search(r'^version = "(.+)"$', (ROOT / "pyproject.toml").read_text(), re.M).group(1) == planner.__version__
+    assert f"## {planner.__version__} " in (ROOT / "CHANGELOG.md").read_text()
+    assert run_cli("--version").stdout.strip() == f"allo-router {planner.__version__}"

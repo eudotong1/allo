@@ -8,15 +8,17 @@ Unknown readings are printed as unknown, not guessed. Starting jobs lives in all
   allo-router                      print the plan
   allo-router set <pool> pct=40    update a reading (also usd=, reset=ISO-UTC, note=)
   allo-router init                 write a sample pools.json and tasks.json (dates relative to now)
-  allo-router run [--execute]      show (default) or run each job through its pool's backend; see allo_exec.py
+  allo-router run                  preview each job and save the plan to plan.json; see allo_exec.py
+  allo-router run --plan plan.json --execute   run exactly that reviewed plan through each pool's backend
   allo-router --dir examples       use another folder
+  allo-router --version            print the version
 """
 import json
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 STALE_H = 24
 
 # Starter files written by `allo-router init`. Kept in code so a pip install works without extra data files.
@@ -311,7 +313,9 @@ def main(argv):
         i = argv.index("--dir")
         here = Path(argv[i + 1])
         argv = argv[:i] + argv[i + 2:]
-    if argv and argv[0] == "init":
+    if argv and argv[0] == "--version":
+        print("allo-router", __version__)
+    elif argv and argv[0] == "init":
         cmd_init(here)
     elif argv and argv[0] == "set":
         cmd_set(here, argv[1:])

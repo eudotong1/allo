@@ -1,6 +1,6 @@
 [project]
 name = "allo-router"
-version = "0.1.0"
+version = "0.2.0"
 description = "Allo Router: the agent router for maximizing usage. Plans which AI plan should take which job before limits reset."
 readme = "README.md"
 requires-python = ">=3.9"
