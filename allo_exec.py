@@ -59,6 +59,7 @@ class ShellBackend:
     run block: {"backend": "shell", "command": ["claude", "-p", "{prompt}"], "env": {...}, "cwd": "...", "timeout_s": 1800}
     Items in `command` may hold {prompt}, {task_id}, {task_name} and {tier}. With no {prompt}, the prompt goes on stdin.
     `env` adds variables on top of yours (for example which config dir a CLI uses). Never put secrets in pools.json.
+    `cwd` (or a task's own `cwd`) is relative to the config folder, which is also the default.
     """
 
     def __init__(self, cfg):
@@ -185,8 +186,9 @@ def select(cfg, tasks, here, now, only=None, allow_unverified=False, rerun=False
             continue
         run_cfg = pools[pid].get("run") if pid else None
         cwd = t.get("cwd") or (run_cfg.get("cwd") if isinstance(run_cfg, dict) else None)
+        # Jobs run in the config folder unless told otherwise, never wherever allo-router happened to be started.
         job = {"task": t, "pool": pid, "note": note, "prompt": t.get("prompt") or t["name"],
-               "cwd": str(here / cwd) if cwd else None, "here": str(here), "backend": None, "skip": None}
+               "cwd": str(here / cwd) if cwd else str(here), "here": str(here), "backend": None, "skip": None}
         key = (str(t["id"]), t["name"])
         if pid is None:
             job["skip"] = "unassigned: no pool fits this job"

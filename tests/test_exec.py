@@ -165,6 +165,17 @@ def test_task_cwd_is_relative_to_the_config_folder(tmp_path):
     assert "CWD:" + str((tmp_path / "repo").resolve()) in (tmp_path / log(tmp_path)[0]["output"]).read_text()
 
 
+def test_jobs_run_in_the_config_folder_by_default(tmp_path, monkeypatch):
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    monkeypatch.chdir(elsewhere)
+    cfg = tmp_path / "cfg"
+    cfg.mkdir()
+    write_cfg(cfg, {"backend": "shell", "command": [PY, "-c", "import os; print('CWD:' + os.getcwd())"]})
+    run(cfg, "--execute", "--yes")
+    assert "CWD:" + str(cfg.resolve()) + "\n" in (cfg / log(cfg)[0]["output"]).read_text()
+
+
 def test_missing_cwd_skips_the_job(tmp_path):
     write_cfg(tmp_path, {"backend": "shell", "command": ECHO_ARG, "cwd": "nope"})
     code, out = run(tmp_path, "--execute", "--yes")
