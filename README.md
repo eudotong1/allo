@@ -4,11 +4,12 @@ The agent router for maximizing usage. Site: https://allorouter.com
 
 You pay for several AI plans. Each has its own weekly limit and its own reset time. Some capacity goes unused while another plan runs dry. This tool tells you which plan should take which job before the next reset, and can then start those jobs for you.
 
-It has four parts:
+It has five parts:
 - The **planner** reads two JSON files you keep and prints a proposal. It never logs in to a plan, never starts a job, never sends anything and makes no network calls.
 - **Sync** (`allo-router sync`) fills in how much of each plan is used from files Claude Code and Codex already keep on your computer, where they record it. Where a source gives no limit, it says so instead of guessing.
 - The **executor** (`allo-router run`) previews that proposal and saves it as a plan file. `allo-router run --plan plan.json --execute` then runs exactly that reviewed plan through the CLI you configured for each pool, such as `claude -p` or `codex exec`, asking before each job. If anything changed since you reviewed it, it refuses and starts nothing.
 - The **report** (`allo-router report`) reads the run log and summarizes what was routed where, what worked, what misrouted, the share of each plan's limit jobs actually used (measured, where it can be), and a separately labelled estimate of the usage saved. It is read-only.
+- The **dashboard** (`allo-router dashboard`) serves a read-only page on 127.0.0.1 showing the same files live: what is running, what each plan has left, where each queued job would go, and whether the next scheduled run will accept its plan.
 
 ## Quickstart
 Needs Python 3.9 or newer. No dependencies. Install with `pip install .` (or `uv tool install .`) from this folder (not on PyPI yet), or run `python3 allo.py` directly.
@@ -21,6 +22,7 @@ Needs Python 3.9 or newer. No dependencies. Install with `pip install .` (or `uv
     allo-router run                    # preview: the exact command each job would run; saves plan.json
     allo-router run --plan plan.json --execute   # runs exactly that plan, asking before each job
     allo-router report --period week   # what ran, where, and what it saved (an estimate)
+    allo-router dashboard --open       # a read-only local page of all of the above
 
 Without installing, replace `allo-router` with `python3 /path/to/allo.py`.
 
@@ -104,6 +106,9 @@ The hash catches accidental edits and drift. It is not a signature: anyone who c
 
 Other flags: `--only 1,3` limits the preview to those task ids. `allo-router run --help` lists them all.
 
+### Scheduled runs: `--refresh`
+A plan you review in the evening is older than `--max-plan-age` by an overnight run. `allo-router run --refresh plan.json` re-checks it shortly before the run on fresh readings (it auto-syncs first, like a preview) and saves it again only if `pools.json` apart from readings and `tasks.json` are as reviewed, the review is at most `--max-review-age` minutes old (default 960, counted from the review, not the last refresh), and every job reviewed as runnable comes out with the same pool, prompt, folder and command. A job that finished since is skipped; a job reviewed as skipped stays skipped. Otherwise it saves nothing and exits 2. It starts nothing. `--save-plan FILE` writes the copy elsewhere. The refreshed plan records `reviewed_at` and `reviewed_plan`. [examples/launchd/](examples/launchd/) has a launchd job that runs refresh, then execute.
+
 ## Report
 `allo-router report` turns `runs.jsonl` into a markdown summary on stdout. It starts nothing and changes no file except the CSV you ask for.
 
@@ -128,11 +133,21 @@ It shows, per period: jobs logged and routed, how many ran, succeeded, failed or
 
 Logs written by 0.2.0 lack skips, reading flags and usage; the report shows those fields as `not recorded`.
 
+## Dashboard
+`allo-router dashboard` serves one page on http://127.0.0.1:8765 (`--port` to change, `--open` to open it). It shows:
+- whether a job is running (from `runs/current.json`, which the executor writes while a job runs, checked against its process) and why that plan was picked,
+- each plan's reading, flags and reset on one time axis, with the jobs that would run next on each plan,
+- the saved `plan.json`: when it was reviewed, whether it still matches, and whether the next scheduled run will accept it,
+- launchd agents in `~/Library/LaunchAgents` that run `allo-router` on this folder: their next run, whether they are loaded (`launchctl print`), and the last outcome in their log,
+- today's jobs with plan, result, time, measured plan use and tokens, and this week's counts, misroutes, measured use per plan and the estimated saving.
+
+It is read-only: it never syncs, never starts a job and never loads or unloads a launchd agent. It listens on 127.0.0.1 only, answers GET only, and refuses requests whose `Host` is not this computer. `--json` prints the data and exits. `--example` serves made-up data, labelled "Example data" on the page. It refreshes every 15 seconds.
+
 ## What it does not do
 - It does not contact any provider for usage. `sync` reads only files on your computer, and only where those files hold a limit does it record a percentage. Those formats are undocumented and may change; when they do, sync says UNAVAILABLE and you type the numbers in with `set`.
 - It does not check whether a provider's terms allow a given use of your plan, including running a CLI non-interactively. That is yours to read.
 - Cost estimates are your guesses. The planner does not measure them.
-- No dashboard and no built-in scheduler yet; the report is markdown and CSV. A saved plan can be run from cron or launchd (`run --plan plan.json --execute --yes --max-plan-age 300`); something still has to preview a fresh plan before each run. See [docs/roadmap.md](docs/roadmap.md).
+- No built-in scheduler. A reviewed plan can be run from launchd or cron with `run --refresh` then `run --plan ... --execute --yes` ([examples/launchd/](examples/launchd/)); a person still reviews each plan. See [docs/roadmap.md](docs/roadmap.md).
 
 ## More
 - [CHANGELOG.md](CHANGELOG.md): what changed in each version. This is 0.3.0; `allo-router --version` prints it.

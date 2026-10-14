@@ -1,6 +1,6 @@
 # Architecture
 
-Allo Router is four stdlib-only Python modules and two JSON files you own.
+Allo Router is five stdlib-only Python modules (plus `allo_dash_page.py`, the dashboard's HTML) and two JSON files you own.
 
     ~/.claude, ~/.codex ──> allo_sync.py: sync ──> readings in pools.json                       (allo-router sync)
     pools.json ─┐                         ┌─> printed plan                                   (allo-router)
@@ -14,6 +14,9 @@ Allo Router is four stdlib-only Python modules and two JSON files you own.
                                                          runs.jsonl + runs/*.log
                                                                        │
                                         allo_report.py: cmd_report ──> markdown on stdout, --csv FILE   (allo-router report)
+
+    pools.json, tasks.json, plan.json, runs.jsonl, runs/current.json, ~/Library/LaunchAgents
+        ──> allo_dash.py: build_state ──> JSON ──> page on 127.0.0.1           (allo-router dashboard)
 
 ## allo.py: the planner
 Pure functions over the two files. It never imports `subprocess`, `socket` or anything that reaches out; a test checks this.
@@ -105,6 +108,17 @@ One line per job reached or skipped under `--execute`:
 
 Only `ok` lines count as done for the rerun guard. A `dry-run` backend line records that the job was reached, not that it ran. Lines written by 0.2.0 have only the first ten fields; the report shows the rest as not recorded. Logs and plan files hold your prompts and model output; `runs.jsonl`, `runs/` and `plan.json` are gitignored.
 
+### Refreshing a reviewed plan (`refresh_jobs`, `refresh`)
+`run --refresh FILE` is for a scheduled run some hours after a review. It loads the plan (hash checked), refuses if the review is older than `--max-review-age` (from `reviewed_at`, which a refreshed plan carries over from the plan a person reviewed, so refreshing a refresh does not extend it), if the plan was saved for another folder, or if `config_hash` differs, meaning anything in `pools.json` but the readings, or `tasks.json`, changed. It then calls `select` with the plan's own options on the readings as they are now and compares each job with the saved one: a job saved as skipped stays skipped; a runnable job that has since finished ok becomes skipped; a runnable job that would now be skipped for any other reason, or whose `job_record` differs, refuses the refresh. On success it saves a new plan with `reviewed_at` and `reviewed_plan` (the hash of the reviewed plan), which `--execute` then checks like any other. `allo.main` auto-syncs before `--refresh`, as before a preview.
+
+### The running marker
+While a non-dry-run job runs, `run_jobs` writes `runs/current.json` (task id and name, pool, start, process id, plan hash) and removes it when the job ends, whatever the outcome. The dashboard treats a marker whose process is gone as a run that did not finish cleanly.
+
+## allo_dash.py: the dashboard
+`build_state(here, now)` returns one dict, built only by reading: `pool_rows` for the readings and flags, `select` for where each job would go now (the same code a preview uses, without saving), `load_plan` and `jobs_from_plan` for whether the saved plan still matches, `load_entries`, `Prices` and `build` from the report for today's jobs and the week, `runs/current.json` for the running job, and `find_agents` for launchd agents whose arguments run `allo-router` on this folder (`plistlib`; a `/bin/sh -c` wrapper is read as one string). For each agent it computes the next `StartCalendarInterval` time, asks `launchctl print` whether it is loaded, and reads the last outcome line of its log. `health` turns that into the headline and a list of issues, for example a saved plan that will be too old by the next run. `example_state` writes a made-up folder to a temporary directory and runs the same `build_state` on it, then marks it `example`.
+
+`serve` binds `ThreadingHTTPServer` to `127.0.0.1` only. `respond(method, path, host, port, ...)` is a pure function, so tests cover it without a socket: it refuses any `Host` other than `127.0.0.1:PORT` or `localhost:PORT` (403, against DNS rebinding), anything but GET or HEAD (405), and serves `/`, `/api/state` and `/fonts/NAME.woff2` from `docs/fonts` when that folder exists (a checkout or editable install). The page is in `allo_dash_page.py` so it ships with a plain install; it falls back to system fonts without `docs/fonts`.
+
 ## allo_report.py: the report
 `cmd_report` reads `runs.jsonl` (unreadable lines are counted and skipped), filters by `--since`/`--until`, groups by `--period`, and prints markdown: a summary per period, the MEASURED plan use from `plan_usage` (per pool and per job, with CLI-reported tokens), the usage-saved ESTIMATE with its method, misroutes, and one row per job. The two never mix: the estimate does not read `plan_usage`. `--csv FILE` writes the same rows with every derived column. It reads `pools.json` for pool kinds and `tasks.json` for `est_usd` of old entries when they exist, and needs neither. It imports neither `allo_exec` nor anything that starts processes; a test checks this.
 
@@ -133,8 +147,8 @@ Built in:
 
 ## What is deliberately missing
 - The executor never edits `pools.json` or `tasks.json`. Usage readings come only from files the provider's own software writes; where none gives a limit, the reading is PARTIAL or UNAVAILABLE, never estimated.
-- No network code anywhere. Any network use happens inside the CLI you configure, under that CLI's own login.
+- No outbound network code anywhere. The dashboard only listens, on 127.0.0.1. Any network use happens inside the CLI you configure, under that CLI's own login.
 - No secrets in config. The CLI you call should already be authenticated.
 
 ## Tests
-`tests/test_allo.py` covers the planner and the CLI. `tests/test_exec.py` covers the executor with local `python -c` commands standing in for real CLIs. `tests/test_report.py` covers the report and what the executor logs for it, again with `python -c` stand-ins that print `claude`- and `codex`-style usage JSON. `tests/test_sync.py` covers sync, auto-sync, readings around jobs, the measured report section and recurring jobs, with fake `~/.claude` and `~/.codex` folders (HOME points at an empty temp folder, so the real ones are never read). `tests/conftest.py` blocks socket connections and DNS for every test.
+`tests/test_allo.py` covers the planner and the CLI. `tests/test_exec.py` covers the executor with local `python -c` commands standing in for real CLIs. `tests/test_report.py` covers the report and what the executor logs for it, again with `python -c` stand-ins that print `claude`- and `codex`-style usage JSON. `tests/test_sync.py` covers sync, auto-sync, readings around jobs, the measured report section and recurring jobs, with fake `~/.claude` and `~/.codex` folders (HOME points at an empty temp folder, so the real ones are never read). `tests/test_refresh.py` covers `run --refresh` and the running marker. `tests/test_dash.py` covers the dashboard's state, launchd discovery and schedule maths, that it writes nothing and never syncs, the example data, and the request handler. `tests/conftest.py` blocks socket connections and DNS for every test.

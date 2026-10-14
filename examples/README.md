@@ -2,6 +2,7 @@
 
 - `pools.json`, `tasks.json`: the same starter files `allo-router init` writes. Readings are dated 2099 so they never go stale here; `init` writes dates relative to today instead.
 - `custom_backend.py`: a backend that writes each job to an `outbox/` folder instead of starting it.
+- `launchd/`: a nightly launchd job that refreshes a reviewed plan on fresh readings, then runs it. See its README.
 
 Try them without touching your own files:
 

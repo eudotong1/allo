@@ -2,6 +2,15 @@
 
 All notable changes to Allo Router. Dates are MM/DD/YYYY.
 
+## Unreleased
+
+### Added
+- **`allo-router dashboard`.** A read-only page on 127.0.0.1 built from the files the router keeps: the running job and why its plan was picked, each plan's reading and reset on one time axis with the queued jobs on it, the saved plan and whether the next scheduled run will accept it, launchd agents for the folder (via `launchctl print`; never loads or unloads) and their last logged outcome, today's jobs, and this week's counts, measured plan use and estimated saving. GET only, loopback only, `Host` checked. `--json` prints the data; `--example` serves labelled example data through the real planner.
+- **`allo-router run --refresh FILE`** for scheduled runs. Re-checks a reviewed plan on fresh readings and saves it again (`--save-plan` or the same file) only if the config apart from readings and the tasks are as reviewed, the review is within `--max-review-age` minutes (default 960, counted from the review across refreshes), and every runnable job comes out with the same pool, prompt, folder and command. Saves nothing and exits 2 otherwise. Refreshed plans carry `reviewed_at` and `reviewed_plan`.
+- `examples/launchd/`: a launchd job that runs refresh, then execute, in one job.
+- The executor writes `runs/current.json` (task, pool, start, process id) while a job runs, and removes it when the job ends. Not for the dry-run backend.
+- Site: redesigned landing page; Archivo and JetBrains Mono (SIL OFL) are served from `docs/fonts`.
+
 ## 0.3.0 (10/14/2026)
 
 ### Added

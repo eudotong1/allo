@@ -257,3 +257,17 @@ def test_server_binds_to_loopback_only(monkeypatch):
     monkeypatch.setattr(http.server, "ThreadingHTTPServer", Fake)
     assert allo_dash.serve(9001, lambda: {}, out=lambda *_: None) == 0
     assert bound == [("127.0.0.1", 9001)]
+
+
+def test_example_launchd_template_is_recognised_as_refresh_then_execute(tmp_path):
+    here, agents = tmp_path / "cfg", tmp_path / "agents"
+    here.mkdir(); agents.mkdir()
+    text = (Path(__file__).parent.parent / "examples" / "launchd" / "allo-overnight.plist").read_text()
+    text = (text.replace("__ALLO__", "/opt/bin/allo-router").replace("__DIR__", str(here.resolve()))
+            .replace("__PATH__", "/opt/bin:/usr/bin:/bin"))
+    (agents / "allo-overnight.plist").write_text(text)
+    (a,) = allo_dash.find_agents(here, agents)
+    assert a["refreshes"] and a["executes"] and a["max_review_age"] == 600 and a["max_plan_age"] == 30
+    assert a["calendar"] == {"Hour": 3, "Minute": 0} and a["log"] == f"{here.resolve()}/overnight.log"
+    refresh_at = a["args"][2].index("--refresh")
+    assert refresh_at < a["args"][2].index("--execute") and "&&" in a["args"][2]

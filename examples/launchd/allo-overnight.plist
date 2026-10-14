@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  A nightly Allo Router run on macOS that only runs a plan a person reviewed that evening.
+  See README.md in this folder. Replace __ALLO__ (the allo-router executable), __DIR__ (the config folder)
+  and __PATH__ (folders holding allo-router and the CLIs your pools run), without spaces, before installing.
+
+  At 03:00 it does two things in order, in one job so they cannot race after the Mac wakes from sleep:
+   1. The refresh step syncs readings and re-checks the plan you reviewed against them. It saves the plan again only
+      if pools.json (apart from readings) and tasks.json are as reviewed, the review is at most 600 minutes old,
+      and every job reviewed as runnable comes out with the same plan, prompt, folder and command. Otherwise it
+      saves nothing and exits 2.
+   2. Only if that succeeded, the execute step runs exactly that plan, which is seconds old.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.example.allo-overnight</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/sh</string>
+    <string>-c</string>
+    <string>date -u +"%Y-%m-%dT%H:%M:%SZ overnight start"; __ALLO__ --dir __DIR__ run --refresh __DIR__/plan.json --max-review-age 600 &amp;&amp; __ALLO__ --dir __DIR__ run --plan __DIR__/plan.json --execute --yes --max-plan-age 30</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>__DIR__</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>__PATH__</string>
+  </dict>
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key>
+    <integer>3</integer>
+    <key>Minute</key>
+    <integer>0</integer>
+  </dict>
+  <key>RunAtLoad</key>
+  <false/>
+  <key>StandardOutPath</key>
+  <string>__DIR__/overnight.log</string>
+  <key>StandardErrorPath</key>
+  <string>__DIR__/overnight.log</string>
+</dict>
+</plist>
