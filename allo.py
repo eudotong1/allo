@@ -2,12 +2,13 @@
 """Allo Router: the agent router for maximizing usage. Plans which AI plan should take which job before limits reset.
 
 Reads pools.json and tasks.json from the directory you point it at (default: current directory).
-Read-only by default. It never calls a network, never sends anything and never starts a job.
-Unknown readings are printed as unknown, not guessed.
+The planner in this file is read-only. It never calls a network, never sends anything and never starts a job.
+Unknown readings are printed as unknown, not guessed. Starting jobs lives in allo_exec.py, behind `run`.
 
   allo-router                      print the plan
   allo-router set <pool> pct=40    update a reading (also usd=, reset=ISO-UTC, note=)
   allo-router init                 write a sample pools.json and tasks.json (dates relative to now)
+  allo-router run [--execute]      show (default) or run each job through its pool's backend; see allo_exec.py
   allo-router --dir examples       use another folder
 """
 import json
@@ -39,7 +40,15 @@ STARTER_POOLS = {
       ],
       "remaining_pct": 30,
       "resets_at": "2099-01-04T15:00:00Z",
-      "updated_at": "2099-01-03T09:00:00Z"
+      "updated_at": "2099-01-03T09:00:00Z",
+      "run": {
+        "backend": "shell",
+        "command": [
+          "claude",
+          "-p",
+          "{prompt}"
+        ]
+      }
     },
     {
       "id": "claude_personal",
@@ -61,7 +70,15 @@ STARTER_POOLS = {
       ],
       "remaining_pct": 90,
       "resets_at": "2099-01-06T06:00:00Z",
-      "updated_at": "2099-01-03T09:00:00Z"
+      "updated_at": "2099-01-03T09:00:00Z",
+      "run": {
+        "backend": "shell",
+        "command": [
+          "codex",
+          "exec",
+          "{prompt}"
+        ]
+      }
     },
     {
       "id": "api_credit",
@@ -73,7 +90,10 @@ STARTER_POOLS = {
       ],
       "remaining_usd": 200,
       "resets_at": "2099-01-10T00:00:00Z",
-      "updated_at": "2099-01-03T09:00:00Z"
+      "updated_at": "2099-01-03T09:00:00Z",
+      "run": {
+        "backend": "dry-run"
+      }
     }
   ]
 }
@@ -88,7 +108,8 @@ STARTER_TASKS = {
       "needs": [
         "api"
       ],
-      "priority": 1
+      "priority": 1,
+      "prompt": "Draft three subject lines and a 200-word intro for this week's newsletter."
     },
     {
       "id": 2,
@@ -98,7 +119,8 @@ STARTER_TASKS = {
       "needs": [
         "api"
       ],
-      "priority": 2
+      "priority": 2,
+      "prompt": "Summarize notes/interviews.md into the five requests customers made most often."
     },
     {
       "id": 3,
@@ -106,7 +128,8 @@ STARTER_TASKS = {
       "tier": "public",
       "est_usd": 0,
       "needs": [],
-      "priority": 3
+      "priority": 3,
+      "prompt": "Refactor the pricing page for readability without changing behavior. Show the diff; do not commit."
     },
     {
       "id": 4,
@@ -116,7 +139,8 @@ STARTER_TASKS = {
       "needs": [
         "api"
       ],
-      "priority": 4
+      "priority": 4,
+      "prompt": "List every change in the contract redlines and flag any that shift liability."
     }
   ]
 }
@@ -280,6 +304,9 @@ def main(argv):
         cmd_init(here)
     elif argv and argv[0] == "set":
         cmd_set(here, argv[1:])
+    elif argv and argv[0] == "run":
+        import allo_exec  # imported here so planning never loads the code that starts processes
+        sys.exit(allo_exec.cmd_run(here, argv[1:], datetime.now(timezone.utc)))
     else:
         print(render(here, datetime.now(timezone.utc)))
 
