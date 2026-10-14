@@ -4,3 +4,6 @@ build/
 .pytest_cache/
 /pools.json
 /tasks.json
+runs.jsonl
+runs/
+plan.json

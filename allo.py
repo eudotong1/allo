@@ -2,22 +2,28 @@
 """Allo Router: the agent router for maximizing usage. Plans which AI plan should take which job before limits reset.
 
 Reads pools.json and tasks.json from the directory you point it at (default: current directory).
-Read-only by default. It never calls a network, never sends anything and never starts a job.
-Unknown readings are printed as unknown, not guessed.
+The planner in this file is read-only. It never calls a network, never sends anything and never starts a job.
+Unknown readings are printed as unknown, not guessed. Starting jobs lives in allo_exec.py, behind `run`.
 
   allo-router                      print the plan
   allo-router set <pool> pct=40    update a reading (also usd=, reset=ISO-UTC, note=)
   allo-router init                 write a sample pools.json and tasks.json (dates relative to now)
+  allo-router run                  preview each job and save the plan to plan.json; see allo_exec.py
+  allo-router run --plan plan.json --execute   run exactly that reviewed plan through each pool's backend
   allo-router --dir examples       use another folder
+  allo-router --version            print the version
 """
 import json
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
+__version__ = "0.2.0"
 STALE_H = 24
 
-# Starter files written by `allo init`. Kept in code so a pip install works without extra data files.
+# Starter files written by `allo-router init`. Kept in code so a pip install works without extra data files.
+# Every starter pool uses the dry-run backend, so a first `run --execute` cannot start a real agent.
+# The command each pool would run is shown in the dry run; switch "backend" to "shell" to opt in.
 STARTER_POOLS = {
   "tiers": [
     "public",
@@ -39,7 +45,15 @@ STARTER_POOLS = {
       ],
       "remaining_pct": 30,
       "resets_at": "2099-01-04T15:00:00Z",
-      "updated_at": "2099-01-03T09:00:00Z"
+      "updated_at": "2099-01-03T09:00:00Z",
+      "run": {
+        "backend": "dry-run",
+        "command": [
+          "claude",
+          "-p",
+          "{prompt}"
+        ]
+      }
     },
     {
       "id": "claude_personal",
@@ -50,7 +64,15 @@ STARTER_POOLS = {
       ],
       "remaining_pct": None,
       "resets_at": "2099-01-08T09:00:00Z",
-      "updated_at": None
+      "updated_at": None,
+      "run": {
+        "backend": "dry-run",
+        "command": [
+          "claude",
+          "-p",
+          "{prompt}"
+        ]
+      }
     },
     {
       "id": "chatgpt",
@@ -61,7 +83,15 @@ STARTER_POOLS = {
       ],
       "remaining_pct": 90,
       "resets_at": "2099-01-06T06:00:00Z",
-      "updated_at": "2099-01-03T09:00:00Z"
+      "updated_at": "2099-01-03T09:00:00Z",
+      "run": {
+        "backend": "dry-run",
+        "command": [
+          "codex",
+          "exec",
+          "{prompt}"
+        ]
+      }
     },
     {
       "id": "api_credit",
@@ -73,7 +103,10 @@ STARTER_POOLS = {
       ],
       "remaining_usd": 200,
       "resets_at": "2099-01-10T00:00:00Z",
-      "updated_at": "2099-01-03T09:00:00Z"
+      "updated_at": "2099-01-03T09:00:00Z",
+      "run": {
+        "backend": "dry-run"
+      }
     }
   ]
 }
@@ -88,7 +121,8 @@ STARTER_TASKS = {
       "needs": [
         "api"
       ],
-      "priority": 1
+      "priority": 1,
+      "prompt": "Draft three subject lines and a 200-word intro for this week's newsletter."
     },
     {
       "id": 2,
@@ -98,7 +132,8 @@ STARTER_TASKS = {
       "needs": [
         "api"
       ],
-      "priority": 2
+      "priority": 2,
+      "prompt": "Summarize notes/interviews.md into the five requests customers made most often."
     },
     {
       "id": 3,
@@ -106,7 +141,8 @@ STARTER_TASKS = {
       "tier": "public",
       "est_usd": 0,
       "needs": [],
-      "priority": 3
+      "priority": 3,
+      "prompt": "Refactor the pricing page for readability without changing behavior. Show the diff; do not commit."
     },
     {
       "id": 4,
@@ -116,7 +152,8 @@ STARTER_TASKS = {
       "needs": [
         "api"
       ],
-      "priority": 4
+      "priority": 4,
+      "prompt": "List every change in the contract redlines and flag any that shift liability."
     }
   ]
 }
@@ -171,6 +208,7 @@ def fmt_left(r):
 def propose(tasks, rows, tiers, opts):
     """Tasks in priority order. A credit pool takes 'api' jobs while dollars fit above its reserve.
     Other jobs go to the eligible subscription with the most known headroom, then unknowns.
+    Returns ([(task, pool_id or None, note, eligible_pool_ids)], credit budget left).
     `tiers` is the ordered list of data tiers, least sensitive first. A pool may only take a task
     whose tier is at or below the most sensitive tier the pool lists."""
     rank = {t: i for i, t in enumerate(tiers)}
@@ -196,9 +234,9 @@ def propose(tasks, rows, tiers, opts):
             # not tier-eligible, the job stays unassigned instead of landing on a subscription.
             if credit and credit["left"] is not None and t["est_usd"] <= budget and credit["p"]["id"] in elig:
                 budget -= t["est_usd"]
-                out.append((t, credit["p"]["id"], elig))
+                out.append((t, credit["p"]["id"], "", elig))
             else:
-                out.append((t, None, elig))
+                out.append((t, None, "", elig))
             continue
         cand = [r for r in rows if r["p"]["id"] in elig and r["p"]["kind"] != "credit_usd"
                 and rank[t["tier"]] <= rank[sub_max_tier] and (r["left"] is None or r["left"] >= min_headroom)]
@@ -206,26 +244,37 @@ def propose(tasks, rows, tiers, opts):
         if cand:
             c = cand[0]
             tag = "headroom UNKNOWN, confirm first" if c["left"] is None else f"{c['left']:.0f}% left"
-            out.append((t, f"{c['p']['id']} ({tag})", elig))
+            out.append((t, c["p"]["id"], tag, elig))
         else:
-            out.append((t, None, elig))
+            out.append((t, None, "", elig))
     return out, budget
 
 
-def render(here, now):
+def load(here):
     cfg = json.loads((here / "pools.json").read_text())
     tasks = json.loads((here / "tasks.json").read_text())["tasks"]
-    tiers = cfg.get("tiers", ["public", "private"])
+    return cfg, tasks
+
+
+def build_plan(cfg, tasks, now):
+    """The plan as data: (pool rows, assignments, credit left). Shared by the printout and the executor."""
     rows = pool_rows(cfg["pools"], now)
+    plan, left = propose(tasks, rows, cfg.get("tiers", ["public", "private"]), cfg.get("options", {}))
+    return rows, plan, left
+
+
+def render(here, now):
+    cfg, tasks = load(here)
+    rows, plan, left = build_plan(cfg, tasks, now)
     lines = [f"USAGE PLAN (read-only) as of {now:%Y-%m-%d %H:%M} UTC", "",
              f"{'pool':<32}{'left':>7}{'hrs to reset':>14}  flags"]
     for r in rows:
         h = f"{r['hours']:.0f}" if r["hours"] is not None else "?"
         lines.append(f"{r['p']['label']:<32}{fmt_left(r):>7}{h:>14}  {', '.join(r['flags'])}")
-    plan, left = propose(tasks, rows, tiers, cfg.get("options", {}))
     lines += ["", "PROPOSED ASSIGNMENT (nothing is sent; you approve each one)"]
-    for t, pool, elig in plan:
-        lines.append(f" #{t['id']:<2} {t['name'][:52]:<53} tier={t['tier']:<10} ${t['est_usd']:<4} -> {pool or 'UNASSIGNED'}")
+    for t, pool, note, elig in plan:
+        target = f"{pool} ({note})" if note else pool or "UNASSIGNED"
+        lines.append(f" #{t['id']:<2} {t['name'][:52]:<53} tier={t['tier']:<10} ${t['est_usd']:<4} -> {target}")
         if not pool:
             lines.append(f"      eligible pools by tier: {', '.join(elig) or 'none'}")
     if any(r["p"]["kind"] == "credit_usd" for r in rows):
@@ -304,10 +353,15 @@ def main(argv):
         here = Path(argv[i + 1])
         argv = argv[:i] + argv[i + 2:]
     try:
-        if argv and argv[0] == "init":
+        if argv and argv[0] == "--version":
+            print("allo-router", __version__)
+        elif argv and argv[0] == "init":
             cmd_init(here)
         elif argv and argv[0] == "set":
             cmd_set(here, argv[1:])
+        elif argv and argv[0] == "run":
+            import allo_exec  # imported here so planning never loads the code that starts processes
+            sys.exit(allo_exec.cmd_run(here, argv[1:], datetime.now(timezone.utc)))
         else:
             print(render(here, datetime.now(timezone.utc)))
     except FileNotFoundError as e:
