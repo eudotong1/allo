@@ -4,12 +4,14 @@
 Reads pools.json and tasks.json from the directory you point it at (default: current directory).
 The planner in this file is read-only. It never calls a network, never sends anything and never starts a job.
 Unknown readings are printed as unknown, not guessed. Starting jobs lives in allo_exec.py, behind `run`.
+The report on what ran lives in allo_report.py, behind `report`; it is read-only too.
 
   allo-router                      print the plan
   allo-router set <pool> pct=40    update a reading (also usd=, reset=ISO-UTC, note=)
   allo-router init                 write a sample pools.json and tasks.json (dates relative to now)
   allo-router run                  preview each job and save the plan to plan.json; see allo_exec.py
   allo-router run --plan plan.json --execute   run exactly that reviewed plan through each pool's backend
+  allo-router report               summarize runs.jsonl as markdown (--period day|week, --since, --csv FILE)
   allo-router --dir examples       use another folder
   allo-router --version            print the version
 """
@@ -362,6 +364,9 @@ def main(argv):
         elif argv and argv[0] == "run":
             import allo_exec  # imported here so planning never loads the code that starts processes
             sys.exit(allo_exec.cmd_run(here, argv[1:], datetime.now(timezone.utc)))
+        elif argv and argv[0] == "report":
+            import allo_report
+            sys.exit(allo_report.cmd_report(here, argv[1:], datetime.now(timezone.utc)))
         else:
             print(render(here, datetime.now(timezone.utc)))
     except FileNotFoundError as e:

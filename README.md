@@ -4,9 +4,10 @@ The agent router for maximizing usage. Site: https://allorouter.com
 
 You pay for several AI plans. Each has its own weekly limit and its own reset time. Some capacity goes unused while another plan runs dry. This tool tells you which plan should take which job before the next reset, and can then start those jobs for you.
 
-It has two parts:
+It has three parts:
 - The **planner** reads two JSON files you keep and prints a proposal. It never logs in to a plan, never starts a job, never sends anything and makes no network calls.
 - The **executor** (`allo-router run`) previews that proposal and saves it as a plan file. `allo-router run --plan plan.json --execute` then runs exactly that reviewed plan through the CLI you configured for each pool, such as `claude -p` or `codex exec`, asking before each job. If anything changed since you reviewed it, it refuses and starts nothing.
+- The **report** (`allo-router report`) reads the run log and summarizes what was routed where, what worked, what misrouted, and an estimate of the usage saved. It is read-only.
 
 ## Quickstart
 Needs Python 3.9 or newer. No dependencies. Install with `pip install .` from this folder (not on PyPI yet), or run `python3 allo.py` directly.
@@ -17,6 +18,7 @@ Needs Python 3.9 or newer. No dependencies. Install with `pip install .` from th
     allo-router set chatgpt pct=55     # record a fresh reading
     allo-router run                    # preview: the exact command each job would run; saves plan.json
     allo-router run --plan plan.json --execute   # runs exactly that plan, asking before each job
+    allo-router report --period week   # what ran, where, and what it saved (an estimate)
 
 Without installing, replace `allo-router` with `python3 /path/to/allo.py`.
 
@@ -77,15 +79,37 @@ The hash catches accidental edits and drift. It is not a signature: anyone who c
 - Run on a pool flagged STALE, NO READING, NO RESET TIME or RESET PASSED. Record a fresh reading with `allo-router set`, or preview with `--allow-unverified`.
 - Run a job that already finished ok (per `runs.jsonl`) unless you preview with `--rerun`. A job counts as finished by its task `id` and `name`, not its prompt, so rewording a finished job's `prompt` does not run it again. To run it with the new prompt, preview with `--rerun --only <id>`, or add it as a new task.
 - Pass a prompt that starts with `-` where the CLI would read it as an option. Put `"--"` before `{prompt}` in `command` if your CLI supports it.
-- Update your readings. A finished job does not say how much of a plan it used, so `pools.json` and `tasks.json` are never edited. Each job's output goes to `runs/` and a one-line record to `runs.jsonl`.
+- Update your readings. A finished job does not say how much of a plan it used, so `pools.json` and `tasks.json` are never edited. Each job's output goes to `runs/` and a one-line record to `runs.jsonl`. Under `--execute`, a job that is skipped also gets a line (status `skipped`, with the reason), so the report can show it.
 
 Other flags: `--only 1,3` limits the preview to those task ids. `allo-router run --help` lists them all.
+
+## Report
+`allo-router report` turns `runs.jsonl` into a markdown summary on stdout. It starts nothing and changes no file except the CSV you ask for.
+
+    allo-router report                                  # everything logged so far
+    allo-router report --period week                    # one row per ISO week (or --period day)
+    allo-router report --since 2026-10-01 --until 2026-10-14   # UTC; a bare --until date includes that whole day
+    allo-router report --csv runs.csv > report.md       # also one CSV row per job
+
+It shows, per period: jobs logged and routed, how many ran, succeeded, failed or were skipped, run time, and usage where the CLI reported it. Per job: pool, backend, status, duration, reported usage and whether the pool's reading was fresh when it ran.
+
+**Usage.** Allo Router does not measure usage. When a CLI prints its own usage as JSON, the executor keeps it: `claude -p --output-format json` reports a cost (API list price, even on a subscription) and tokens, `codex exec --json` reports tokens. With plain-text output the report says `not reported`.
+
+**Misroutes** are jobs that failed or timed out, ran on a pool whose reading was flagged (via `--allow-unverified`), or were skipped because no pool fit, the pool needed a fresh reading, the run block was bad or the working folder was missing. A skip because the job already ran, its pool has no run block, or you said no is listed but is not a misroute.
+
+**Usage saved is an ESTIMATE**, labelled as one, with the method printed in every report:
+- Each job that ran gets a cost basis: the CLI-reported cost, else the task's `est_usd`. Jobs with neither are left out and counted.
+- Each pool gets a price factor: `credit_usd` 1.0 (you pay API prices), `subscription` 0.0 (already paid for; the planner only routes to a plan with headroom, so the job uses capacity that expires at reset otherwise). Change one with `--price claude_work=0.2`.
+- The baseline is the same jobs at one factor: `--baseline api` (default, every job at API price), `--baseline max` (every job on the priciest pool) or `--baseline <pool id>`.
+- Est. saved = cost basis x (baseline factor - factor of the pool the job ran on), summed. It ignores whether the job would have fit on the baseline pool and says nothing about how much of a plan's limit was used.
+
+Logs written by 0.2.0 lack skips, reading flags and usage; the report shows those fields as `not recorded`.
 
 ## What it does not do
 - It does not read your usage from any provider. You type the numbers in. Providers do not expose consumer-plan usage in a stable way, so any automatic reader would break without warning.
 - It does not check whether a provider's terms allow a given use of your plan, including running a CLI non-interactively. That is yours to read.
 - Cost estimates are your guesses. The planner does not measure them.
-- No dashboard and no scheduling yet. See [docs/roadmap.md](docs/roadmap.md).
+- No dashboard and no built-in scheduler yet; the report is markdown and CSV. See [docs/roadmap.md](docs/roadmap.md).
 
 ## More
 - [CHANGELOG.md](CHANGELOG.md): what changed in each version. This is 0.2.0; `allo-router --version` prints it.

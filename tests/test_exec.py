@@ -40,9 +40,18 @@ def execute(here, *flags, yes=True, confirm=None, interactive=True, now=NOW):
                confirm=confirm, interactive=interactive, now=now)
 
 
-def log(here):
+def log_all(here):
     p = here / "runs.jsonl"
     return [json.loads(l) for l in p.read_text().splitlines()] if p.exists() else []
+
+
+def log(here):
+    """Jobs that were reached (ran, failed, dry-run); skipped jobs are logged too but are not runs."""
+    return [e for e in log_all(here) if e["status"] != "skipped"]
+
+
+def skips(here):
+    return [(e["task_id"], e["skip_kind"]) for e in log_all(here) if e["status"] == "skipped"]
 
 
 @pytest.fixture

@@ -34,6 +34,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import allo
+from allo_report import usage_from_output
 
 RUN_LOG = "runs.jsonl"
 RUN_DIR = "runs"
@@ -162,7 +163,9 @@ def register_backend(name, cls):
     """Make `cls` available as {"backend": name}. cls(run_block) may raise BackendError to reject its config.
     Instances need describe(job) -> str and run(job) -> dict with status ('ok', 'failed', 'timeout', 'error'
     or 'dry-run'), returncode, stdout and stderr. A job is a dict: task, pool, note, prompt, cwd, here (the
-    config folder), backend, skip. describe() must not start anything: it is what a dry run prints."""
+    config folder), backend, skip, flags (the pool's reading flags), pool_kind. describe() must not start anything: it is
+    what a dry run prints. run() may add "usage" ({"cost_usd", "input_tokens", "output_tokens"}, any subset) when
+    the backend knows what a job used; otherwise usage the CLI printed as JSON is picked up from stdout."""
     BACKENDS[name] = cls
 
 
@@ -204,7 +207,8 @@ def select(cfg, tasks, here, now, only=None, allow_unverified=False, rerun=False
         cwd = t.get("cwd") or (run_cfg.get("cwd") if isinstance(run_cfg, dict) else None)
         # Jobs run in the config folder unless told otherwise, never wherever allo-router happened to be started.
         job = {"task": t, "pool": pid, "note": note, "prompt": t.get("prompt") or t["name"],
-               "cwd": str(here / cwd) if cwd else str(here), "here": str(here), "backend": None, "skip": None}
+               "cwd": str(here / cwd) if cwd else str(here), "here": str(here), "backend": None, "skip": None,
+               "flags": list(flags[pid]) if pid else [], "pool_kind": pools[pid]["kind"] if pid else None}
         key = (str(t["id"]), t["name"])
         if pid is None:
             job["skip"] = "unassigned: no pool fits this job"
@@ -324,14 +328,27 @@ def jobs_from_plan(plan, here, cfg, tasks, now, max_age_min):
     return jobs
 
 
+# Skip reasons, by the start of the text select() and run_jobs() give them. The report reads the kind, not the text.
+SKIP_KINDS = (("unassigned", "unassigned"), ("pool needs a fresh reading", "needs-reading"),
+              ("already ran ok", "already-ran"), ("bad run block", "bad-run-block"),
+              ("working folder", "missing-cwd"), ("you said no", "declined"))
+
+
+def skip_kind(reason):
+    if "has no run block" in reason:
+        return "manual"
+    return next((kind for start, kind in SKIP_KINDS if reason.startswith(start)), "other")
+
+
 def _stamp():
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def record(here, job, res, started, secs):
-    """Append one line to runs.jsonl and keep the job's output in runs/. Returns the output file, if any."""
+    """Append one line to runs.jsonl and keep the job's output in runs/. Returns the output file, if any.
+    A skipped job (res {"status": "skipped", "reason": ...}) gets a line too, so the report can show it."""
     t, out = job["task"], None
-    if res["status"] != "dry-run":
+    if res["status"] not in ("dry-run", "skipped"):
         (here / RUN_DIR).mkdir(exist_ok=True)
         safe_id = re.sub(r"[^A-Za-z0-9_-]", "_", str(t["id"]))
         out = here / RUN_DIR / f"{started.replace(':', '').replace('-', '')}-task{safe_id}.log"
@@ -339,32 +356,46 @@ def record(here, job, res, started, secs):
                        f"# status {res['status']}, exit {res['returncode']}\n\n"
                        f"## stdout\n{res['stdout']}\n## stderr\n{res['stderr']}\n")
     entry = {"at": started, "task_id": t["id"], "task_name": t["name"], "pool": job["pool"],
-             "backend": type(job["backend"]).__name__, "status": res["status"], "returncode": res["returncode"],
-             "seconds": round(secs, 1), "output": str(out.relative_to(here)) if out else None,
-             "plan": job.get("plan")}
+             "backend": type(job["backend"]).__name__ if job["backend"] else None, "status": res["status"],
+             "returncode": res.get("returncode"), "seconds": round(secs, 1) if secs is not None else None,
+             "output": str(out.relative_to(here)) if out else None, "plan": job.get("plan"),
+             "tier": t.get("tier"), "est_usd": t.get("est_usd"), "pool_kind": job.get("pool_kind"),
+             "pool_flags": job.get("flags", [])}
+    if res["status"] == "skipped":
+        entry["reason"], entry["skip_kind"] = res["reason"], skip_kind(res["reason"])
+    usage = res["usage"] if isinstance(res.get("usage"), dict) else usage_from_output(res.get("stdout"))
+    if usage:
+        entry["usage"] = usage
     with open(here / RUN_LOG, "a") as f:
         f.write(json.dumps(entry) + "\n")
     return out
 
 
 def run_jobs(jobs, here, execute=False, confirm=None, out=print):
-    """Print every job; under execute, run the runnable ones in order. Returns the number that failed."""
+    """Print every job; under execute, run the runnable ones in order. Returns the number that failed.
+    Under execute, a skipped job is logged to runs.jsonl as status "skipped"; a preview logs nothing."""
     failed = 0
+
+    def skip(job, reason):
+        out(f"      skip: {reason}")
+        if execute:
+            record(here, job, {"status": "skipped", "reason": reason}, _stamp(), None)
+
     for job in jobs:
         t = job["task"]
         target = f"{job['pool']} ({job['note']})" if job["note"] else job["pool"] or "UNASSIGNED"
         out(f" #{t['id']:<2} {t['name'][:52]:<53} -> {target}")
         if job["skip"]:
-            out(f"      skip: {job['skip']}")
+            skip(job, job["skip"])
             continue
         out(f"      {job['backend'].describe(job)}")
         if not execute:
             continue
         if job["cwd"] and not Path(job["cwd"]).is_dir():
-            out(f"      skip: working folder {job['cwd']} does not exist")
+            skip(job, f"working folder {job['cwd']} does not exist")
             continue
         if confirm and not confirm(job):
-            out("      skip: you said no")
+            skip(job, "you said no")
             continue
         started, t0 = _stamp(), time.monotonic()
         try:

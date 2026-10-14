@@ -1,6 +1,6 @@
 # Architecture
 
-Allo Router is two stdlib-only Python modules and two JSON files you own.
+Allo Router is three stdlib-only Python modules and two JSON files you own.
 
     pools.json ─┐                         ┌─> printed plan                                   (allo-router)
                 ├─> allo.py: build_plan ──┤
@@ -11,6 +11,8 @@ Allo Router is two stdlib-only Python modules and two JSON files you own.
                      load_plan ──> jobs_from_plan ──> run_jobs ──> backend.run   (allo-router run --plan plan.json --execute)
                                                                        │
                                                          runs.jsonl + runs/*.log
+                                                                       │
+                                        allo_report.py: cmd_report ──> markdown on stdout, --csv FILE   (allo-router report)
 
 ## allo.py: the planner
 Pure functions over the two files. It never imports `subprocess`, `socket` or anything that reaches out; a test checks this.
@@ -21,7 +23,7 @@ Pure functions over the two files. It never imports `subprocess`, `socket` or an
 - `build_plan(cfg, tasks, now)` wraps the two. The printout (`render`) and the executor both call it, so what you read is what runs.
 - `cmd_set` and `cmd_init` are the only functions that write, and only to `pools.json` / `tasks.json`.
 
-`main` loads `allo_exec` only for the `run` subcommand, so printing a plan never loads the code that starts processes.
+`main` loads `allo_exec` only for the `run` subcommand and `allo_report` only for `report`, so printing a plan never loads the code that starts processes.
 
 ## allo_exec.py: the executor
 `cmd_run` parses the `run` flags. Without `--plan` it builds the plan with the current time, turns it into jobs, prints them and saves the plan file. With `--plan` it loads a saved plan, checks it against the files as they are now, and (under `--execute`) runs it. `--execute` without `--plan` is refused (exit 2).
@@ -67,16 +69,32 @@ Every job is printed with its target and `backend.describe(job)`, the exact comm
 3. Call `backend.run(job)`. An exception from a plugged-in backend becomes status `error`; later jobs still run.
 4. `record` appends one JSON line to `runs.jsonl` and, unless the status is `dry-run`, writes the command, status, stdout and stderr to `runs/<time>-task<id>.log`.
 
+A job skipped under `--execute`, whether by `select`, the saved plan, a missing folder or your "no", is recorded too, as status `skipped` with no log file. A preview records nothing.
+
 Jobs run one at a time in plan order. Exit code: 0 when nothing failed, 1 when any job ended `failed`, `timeout` or `error`, 2 when it refused to start (no plan, a plan that no longer matches, or no terminal without `--yes`).
 
 ### runs.jsonl
-One line per attempted job:
+One line per job reached or skipped under `--execute`:
 
     {"at": "2026-10-14T09:00:00Z", "task_id": 3, "task_name": "Refactor the pricing page", "pool": "chatgpt",
      "backend": "ShellBackend", "status": "ok", "returncode": 0, "seconds": 41.2, "output": "runs/20261014T090000Z-task3.log",
-     "plan": "sha256:..."}
+     "plan": "sha256:...", "tier": "public", "est_usd": 0, "pool_kind": "subscription", "pool_flags": [],
+     "usage": {"cost_usd": 0.0123, "input_tokens": 1200, "output_tokens": 300}}
+    {"at": "...", "task_id": 4, ..., "backend": null, "status": "skipped", "returncode": null, "seconds": null,
+     "output": null, "reason": "unassigned: no pool fits this job", "skip_kind": "unassigned", ...}
 
-Only `ok` lines count as done for the rerun guard. A `dry-run` backend line records that the job was reached, not that it ran. Logs and plan files hold your prompts and model output; `runs.jsonl`, `runs/` and `plan.json` are gitignored.
+- `pool_flags` are the pool's reading flags when the job was planned (`STALE`, `NO READING`, ...); non-empty only for a job run under `--allow-unverified`.
+- `usage` is present only when known: a backend may return it in its result, otherwise `allo_report.usage_from_output` takes the last JSON object in stdout carrying `total_cost_usd` or a `usage` block. Nothing is estimated at this stage.
+- `skip_kind` is one of `unassigned`, `needs-reading`, `already-ran`, `manual` (no run block), `bad-run-block`, `missing-cwd`, `declined` or `other` (`allo_exec.skip_kind`).
+
+Only `ok` lines count as done for the rerun guard. A `dry-run` backend line records that the job was reached, not that it ran. Lines written by 0.2.0 have only the first ten fields; the report shows the rest as not recorded. Logs and plan files hold your prompts and model output; `runs.jsonl`, `runs/` and `plan.json` are gitignored.
+
+## allo_report.py: the report
+`cmd_report` reads `runs.jsonl` (unreadable lines are counted and skipped), filters by `--since`/`--until`, groups by `--period`, and prints markdown: a summary per period, the usage-saved ESTIMATE with its method, misroutes, and one row per job. `--csv FILE` writes the same rows with every derived column. It reads `pools.json` for pool kinds and `tasks.json` for `est_usd` of old entries when they exist, and needs neither. It imports neither `allo_exec` nor anything that starts processes; a test checks this.
+
+- `misroutes(entry)`: failed, timeout or error; ran with `pool_flags`; or skipped with a `skip_kind` other than `already-ran`, `manual` or `declined`.
+- `Prices`: a factor per pool (override, else 0.0 for `subscription`, 1.0 otherwise) and the baseline factor (`api` 1.0, `max`, or a pool's).
+- `cost_basis(entry)`: reported `cost_usd`, else the entry's `est_usd`, else the task's current `est_usd`, else none.
 
 ## Backends
 A backend is a class registered under a name and chosen by a pool's `run.backend`.
@@ -103,4 +121,4 @@ Built in:
 - No secrets in config. The CLI you call should already be authenticated.
 
 ## Tests
-`tests/test_allo.py` covers the planner and the CLI. `tests/test_exec.py` covers the executor with local `python -c` commands standing in for real CLIs. `tests/conftest.py` blocks socket connections and DNS for every test.
+`tests/test_allo.py` covers the planner and the CLI. `tests/test_exec.py` covers the executor with local `python -c` commands standing in for real CLIs. `tests/test_report.py` covers the report and what the executor logs for it, again with `python -c` stand-ins that print `claude`- and `codex`-style usage JSON. `tests/conftest.py` blocks socket connections and DNS for every test.

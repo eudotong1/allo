@@ -2,6 +2,16 @@
 
 All notable changes to Allo Router. Dates are MM/DD/YYYY.
 
+## Unreleased
+
+### Added
+- **`allo-router report`.** Reads `runs.jsonl` and prints a markdown summary: jobs logged, routed, ran, ok, failed, skipped and dry-run, run time and CLI-reported usage, per `--period day|week` or for a `--since`/`--until` range (UTC). Lists each job's pool, backend, status, duration, usage and whether its pool's reading was fresh, and lists misroutes (failed or timed out, ran on a flagged reading, or skipped because no pool fit, the reading was stale, the run block was bad or the folder was missing). `--csv FILE` writes one row per job. Read-only; stdlib only.
+- **Estimated usage saved**, labelled ESTIMATE with its method in every report: each job's cost basis (CLI-reported cost, else `est_usd`) times the difference between a baseline's price factor and that of the pool it ran on. `--baseline api` (default), `max` or a pool id; `--price POOL=FACTOR` overrides the defaults (subscription 0.0, credit 1.0).
+
+### Changed
+- **`runs.jsonl` records more.** Each line now also has `tier`, `est_usd`, `pool_kind`, `pool_flags` (the pool's reading flags when it ran) and, when the CLI printed it as JSON (`claude -p --output-format json`, `codex exec --json`) or a backend returned it, `usage`. Under `--execute`, skipped jobs are logged as status `skipped` with `reason` and `skip_kind`; they never count as finished. A preview still logs nothing.
+- Backends may return `usage` in their result dict.
+
 ## 0.2.0 (10/14/2026)
 
 ### Added
