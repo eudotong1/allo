@@ -1,0 +1,25 @@
+# Allo Router hosted dashboard: API Worker + D1, serving the static pages in ../web.
+# Local: `npm run dev` (local D1 under .wrangler/, dev login on, no Cloudflare account needed).
+# Nothing here has been deployed. database_id is a placeholder until `wrangler d1 create allo` is run.
+name = "allo-router-app"
+main = "src/index.js"
+compatibility_date = "2026-10-01"
+
+[assets]
+directory = "../web"
+binding = "ASSETS"
+run_worker_first = ["/v1/*", "/auth/*"]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "allo"
+database_id = "00000000-0000-0000-0000-000000000000"
+migrations_dir = "migrations"
+
+[vars]
+FREE_SPOTS = "100"
+# GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET are secrets (`wrangler secret put`), never in this file.
+# DEV_LOGIN is only ever passed on the command line by `npm run dev`, and only works on localhost without GitHub set.
+
+[triggers]
+crons = ["17 4 * * *"]
