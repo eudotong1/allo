@@ -15,7 +15,8 @@ Readings can be typed in with `set` or read from local files with `sync` (allo_s
   allo-router run                  preview each job and save the plan to plan.json; see allo_exec.py
   allo-router run --plan plan.json --execute   run exactly that reviewed plan through each pool's backend
   allo-router report               summarize runs.jsonl as markdown (--period day|week, --since, --csv FILE)
-  allo-router dashboard            a read-only local page on 127.0.0.1: plans, queue, schedule, what ran; see allo_dash.py
+  allo-router dashboard            open a read-only local page on 127.0.0.1: plans, queue, schedule, what ran; see allo_dash.py
+  allo-router dashboard --install-launcher   add an "Allo Dashboard" you can double-click to open it
   allo-router --dir examples       use another folder
   allo-router --no-sync            do not auto-sync before printing or previewing a plan
   allo-router --version            print the version
@@ -25,7 +26,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
 STALE_H = 24
 RECURRING = ("daily", "weekly")
 

@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """Allo Router dashboard: a local page that shows what the router is doing, from the files it already keeps.
 
-  allo-router dashboard                 serve it on http://127.0.0.1:8765 (this computer only)
+  allo-router dashboard                 serve it on http://127.0.0.1:8765 (this computer only) and open it
+  allo-router dashboard --no-open       serve it without opening the browser
   allo-router dashboard --port 9000     another port
-  allo-router dashboard --open          also open it in the browser
   allo-router dashboard --json          print what the page would show, as JSON, and exit
   allo-router dashboard --example       serve made-up example data, labelled "Example data" on the page
+  allo-router dashboard --install-launcher   add an "Allo Dashboard" you can double-click to open it for this folder
 
 It is read-only. It reads pools.json, tasks.json, plan.json, runs.jsonl, runs/current.json (the job running now),
 the launchd agents in ~/Library/LaunchAgents that run allo-router for this config folder, and their log. It does
@@ -14,10 +15,12 @@ not sync (syncing writes pools.json), never starts a job, and never loads or unl
 requests whose Host is not this computer, so a web page elsewhere cannot read it through your browser.
 """
 import argparse
+import errno
 import json
 import os
 import plistlib
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -575,11 +578,23 @@ def serve(port, state_fn, out=print, open_browser=False):
         def log_message(self, fmt, *args):
             pass
 
-    httpd = ThreadingHTTPServer(("127.0.0.1", port), Handler)
+    import webbrowser
     url = f"http://127.0.0.1:{port}/"
+    try:
+        httpd = ThreadingHTTPServer(("127.0.0.1", port), Handler)
+    except OSError as e:
+        if e.errno != errno.EADDRINUSE:
+            raise
+        # A second click on the launcher: the first one is still serving, so just show it.
+        if not already_serving(port):
+            out(f"port {port} on 127.0.0.1 is in use by another program; choose another with --port")
+            return 2
+        out(f"The Allo Router dashboard is already running on {url}" + ("; opening it." if open_browser else "."))
+        if open_browser:
+            webbrowser.open(url)
+        return 0
     out(f"Allo Router dashboard on {url} (this computer only, read-only). Ctrl-C to stop.")
     if open_browser:
-        import webbrowser
         webbrowser.open(url)
     try:
         httpd.serve_forever()
@@ -590,16 +605,106 @@ def serve(port, state_fn, out=print, open_browser=False):
     return 0
 
 
+def already_serving(port):
+    """True if an Allo Router dashboard answers on 127.0.0.1:port."""
+    import urllib.request
+    req = urllib.request.Request(f"http://127.0.0.1:{port}/api/state", headers={"Host": f"127.0.0.1:{port}"})
+    try:
+        with urllib.request.urlopen(req, timeout=3) as r:
+            return r.status == 200 and "config_dir" in json.loads(r.read())
+    except (OSError, ValueError):
+        return False
+
+
+# Launcher: something to double-click that opens the dashboard for one config folder.
+
+LAUNCHER_NAME = "Allo Dashboard"
+
+
+def allo_command():
+    """The argv that starts this allo-router: the installed script when there is one, else python3 allo.py."""
+    me = Path(sys.argv[0]) if sys.argv and sys.argv[0] else None
+    if me and me.name == "allo-router" and me.is_file():
+        return [str(me.absolute())]
+    found = shutil.which("allo-router")
+    return [found] if found else [sys.executable, str(Path(allo.__file__).resolve())]
+
+
+def _desktop_arg(a):
+    """One argument for a .desktop Exec line: quoted when needed, then the file's own backslash escaping."""
+    a = a.replace("%", "%%")
+    if re.search(r"[\s\"'\\`$<>~|&;*?#()]", a):
+        a = '"' + re.sub(r'(["`$\\])', r"\\\1", a) + '"'
+    return a.replace("\\", "\\\\")
+
+
+def install_launcher(here, port=DEFAULT_PORT, platform=None, home=None, argv=None, osacompile="auto",
+                     run=subprocess.run, out=print):
+    """Write a launcher that opens this folder's dashboard. Returns the paths written.
+
+    macOS: ~/Applications/Allo Dashboard.command (opens Terminal, which runs the dashboard; close the window to
+    stop it) and, where osacompile exists, Allo Dashboard.app, which opens that .command, so Spotlight and the
+    Dock can find it. Linux: ~/.local/share/applications/allo-dashboard.desktop, run in a terminal.
+    """
+    platform = platform or sys.platform
+    home = Path(home) if home else Path.home()
+    folder = str(here.resolve())
+    args = (argv or allo_command()) + ["--dir", folder, "dashboard"]
+    if port != DEFAULT_PORT:
+        args += ["--port", str(port)]
+    if platform == "darwin":
+        apps = home / "Applications"
+        apps.mkdir(parents=True, exist_ok=True)
+        cmd = apps / f"{LAUNCHER_NAME}.command"
+        cmd.write_text("#!/bin/sh\n"
+                       f"# Opens the Allo Router dashboard for {folder} in your browser.\n"
+                       "# Written by `allo-router dashboard --install-launcher`. Close this window or press Ctrl-C "
+                       "to stop it.\n"
+                       "exec " + " ".join(shlex.quote(a) for a in args) + "\n")
+        cmd.chmod(0o755)
+        written = [cmd]
+        tool = shutil.which("osacompile") if osacompile == "auto" else osacompile
+        if tool:
+            app = apps / f"{LAUNCHER_NAME}.app"
+            quoted = str(cmd).replace("\\", "\\\\").replace('"', '\\"')
+            r = run([tool, "-o", str(app), "-e", f'do shell script "open " & quoted form of "{quoted}"'],
+                    capture_output=True, text=True)
+            if r.returncode == 0:
+                written.append(app)
+            else:
+                out(f"could not build {app.name} (osacompile: {(r.stderr or '').strip()}); "
+                    f"{cmd.name} works on its own")
+        return written
+    if platform.startswith("linux"):
+        apps = home / ".local" / "share" / "applications"
+        apps.mkdir(parents=True, exist_ok=True)
+        desk = apps / "allo-dashboard.desktop"
+        desk.write_text("[Desktop Entry]\nType=Application\n"
+                        f"Name={LAUNCHER_NAME}\n"
+                        f"Comment=Allo Router dashboard for {folder}, served on this computer only\n"
+                        "Exec=" + " ".join(_desktop_arg(a) for a in args) + "\n"
+                        "Terminal=true\nCategories=Utility;Development;\n")
+        desk.chmod(0o755)
+        return [desk]
+    raise ValueError(f"no launcher for {platform} yet; run `allo-router --dir {folder} dashboard` instead")
+
+
 def cmd_dashboard(here, argv, now_fn, out=print):
     ap = argparse.ArgumentParser(prog="allo-router dashboard", description="Serve a read-only local page showing "
-                                 "plans, the queue, the schedule and what ran, on 127.0.0.1 only.")
+                                 "plans, the queue, the schedule and what ran, on 127.0.0.1 only, and open it "
+                                 "in your browser.")
     ap.add_argument("--port", type=int, default=DEFAULT_PORT, help=f"port on 127.0.0.1 (default {DEFAULT_PORT})")
-    ap.add_argument("--open", action="store_true", help="open the page in your browser")
+    ap.add_argument("--no-open", action="store_true", help="do not open the page in your browser")
     ap.add_argument("--json", action="store_true", help="print the page's data as JSON and exit")
     ap.add_argument("--example", action="store_true", help='show made-up example data, labelled "Example data"')
+    ap.add_argument("--install-launcher", action="store_true",
+                    help="add an Allo Dashboard you can double-click to open this folder's dashboard, and exit "
+                         "(macOS: ~/Applications; Linux: ~/.local/share/applications)")
     a = ap.parse_args(argv)
     if not 0 < a.port < 65536:
         ap.error("--port must be between 1 and 65535")
+    if a.install_launcher and a.example:
+        ap.error("--install-launcher opens your own folder; leave out --example")
     state_fn = (lambda: example_state(now_fn())) if a.example else (lambda: build_state(here, now_fn()))
     if a.json:
         out(json.dumps(state_fn(), indent=2, default=str))
@@ -607,4 +712,16 @@ def cmd_dashboard(here, argv, now_fn, out=print):
     if not a.example and not (here / "pools.json").exists():
         out(f"pools.json not found in {here.resolve()}; run `allo-router init`, use --dir, or try --example")
         return 2
-    return serve(a.port, state_fn, out, a.open)
+    if a.install_launcher:
+        try:
+            paths = install_launcher(here, a.port, out=out)
+        except ValueError as e:
+            out(str(e))
+            return 2
+        for p in paths:
+            out(f"wrote {p}")
+        where = "your applications menu" if paths[0].suffix == ".desktop" else str(paths[0].parent)
+        out(f"Open {LAUNCHER_NAME} from {where} to see the dashboard for {here.resolve()}. "
+            "It runs in a terminal window; close it to stop the dashboard.")
+        return 0
+    return serve(a.port, state_fn, out, not a.no_open)

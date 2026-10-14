@@ -1,4 +1,4 @@
-import importlib.util, json, subprocess, sys
+import importlib.util, json, re, subprocess, sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import pytest
@@ -299,7 +299,8 @@ def test_only_limits_to_listed_task_ids(tmp_path):
     tasks = [{"id": i, "name": f"T{i}", "tier": "public", "est_usd": 0, "needs": [], "priority": i} for i in (1, 2, 3)]
     write_cfg(tmp_path, {"backend": "shell", "command": ECHO_ARG}, tasks)
     code, out = execute(tmp_path, "--only", "1, 3")
-    assert [e["task_id"] for e in log(tmp_path)] == [1, 3] and "T2" not in out
+    # \b: the log file names carry a UTC stamp such as 20261014T200800Z, which contains "T2" after 20:00
+    assert [e["task_id"] for e in log(tmp_path)] == [1, 3] and not re.search(r"\bT2\b", out)
 
 
 def test_jobs_run_in_priority_order(tmp_path):

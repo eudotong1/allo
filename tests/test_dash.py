@@ -272,3 +272,179 @@ def test_example_launchd_template_is_recognised_as_refresh_then_execute(tmp_path
     assert a["calendar"] == {"Hour": 3, "Minute": 0} and a["log"] == f"{here.resolve()}/overnight.log"
     refresh_at = a["args"][2].index("--refresh")
     assert refresh_at < a["args"][2].index("--execute") and "&&" in a["args"][2]
+
+
+# Opening it: the browser by default, and a launcher to double-click
+
+def test_dashboard_opens_the_browser_unless_no_open(tmp_path, monkeypatch):
+    write_cfg(tmp_path, SHELL)
+    calls = []
+    monkeypatch.setattr(allo_dash, "serve", lambda port, fn, out, open_browser: calls.append(open_browser) or 0)
+    assert allo_dash.cmd_dashboard(tmp_path, [], lambda: NOW, out=lambda *_: None) == 0
+    assert allo_dash.cmd_dashboard(tmp_path, ["--no-open"], lambda: NOW, out=lambda *_: None) == 0
+    assert calls == [True, False]
+
+
+def fake_server(monkeypatch, opened, error=None):
+    import http.server
+    import webbrowser
+
+    class Fake:
+        def __init__(self, addr, handler):
+            if error:
+                raise error
+
+        def serve_forever(self):
+            raise KeyboardInterrupt
+
+        def server_close(self):
+            pass
+
+    monkeypatch.setattr(http.server, "ThreadingHTTPServer", Fake)
+    monkeypatch.setattr(webbrowser, "open", opened.append)
+
+
+def test_serve_opens_the_page_once_it_is_listening(monkeypatch):
+    opened = []
+    fake_server(monkeypatch, opened)
+    assert allo_dash.serve(9001, lambda: {}, out=lambda *_: None, open_browser=True) == 0
+    assert opened == ["http://127.0.0.1:9001/"]
+
+
+def test_a_second_start_opens_the_running_dashboard_instead_of_failing(monkeypatch):
+    import errno
+    opened, out = [], []
+    fake_server(monkeypatch, opened, OSError(errno.EADDRINUSE, "in use"))
+    monkeypatch.setattr(allo_dash, "already_serving", lambda port: True)
+    assert allo_dash.serve(9001, lambda: {}, out=out.append, open_browser=True) == 0
+    assert opened == ["http://127.0.0.1:9001/"] and "already running" in out[0]
+
+
+def test_a_port_taken_by_another_program_is_reported(monkeypatch):
+    import errno
+    opened, out = [], []
+    fake_server(monkeypatch, opened, OSError(errno.EADDRINUSE, "in use"))
+    monkeypatch.setattr(allo_dash, "already_serving", lambda port: False)
+    assert allo_dash.serve(9001, lambda: {}, out=out.append, open_browser=True) == 2
+    assert opened == [] and "--port" in out[0]
+
+
+@pytest.mark.parametrize("answer, expect", [(b'{"config_dir": "/x", "pools": []}', True), (b'{"other": 1}', False),
+                                            (b"<html>", False), (None, False)])
+def test_already_serving_only_recognises_a_dashboard(monkeypatch, answer, expect):
+    import io
+    import urllib.error
+    import urllib.request
+    seen = []
+
+    class Resp(io.BytesIO):
+        status = 200
+
+    def urlopen(req, timeout):
+        seen.append((req.full_url, req.get_header("Host")))
+        if answer is None:
+            raise urllib.error.URLError("refused")
+        return Resp(answer)
+
+    monkeypatch.setattr(urllib.request, "urlopen", urlopen)
+    assert allo_dash.already_serving(9001) is expect
+    assert seen == [("http://127.0.0.1:9001/api/state", "127.0.0.1:9001")]
+
+
+def test_macos_launcher_is_an_executable_command_for_this_folder(tmp_path):
+    here, home = tmp_path / "my router", tmp_path / "home"
+    here.mkdir()
+    (paths) = allo_dash.install_launcher(here, platform="darwin", home=home, argv=["/opt/bin/allo-router"],
+                                         osacompile=None)
+    (cmd,) = paths
+    assert cmd == home / "Applications" / "Allo Dashboard.command"
+    assert cmd.stat().st_mode & 0o111 == 0o111
+    text = cmd.read_text()
+    assert text.startswith("#!/bin/sh\n")
+    assert f"exec /opt/bin/allo-router --dir '{here.resolve()}' dashboard\n" in text
+    assert "--no-open" not in text and "--port" not in text
+
+
+def test_macos_launcher_runs_the_dashboard_command_even_with_spaces_in_the_path(tmp_path):
+    import subprocess
+    here, home = tmp_path / "it's my router", tmp_path / "home"
+    here.mkdir()
+    (cmd,) = allo_dash.install_launcher(here, port=9100, platform="darwin", home=home,
+                                        argv=[sys.executable, "-c", "import sys; print(sys.argv[1:])"],
+                                        osacompile=None)
+    r = subprocess.run([str(cmd)], capture_output=True, text=True)
+    assert r.returncode == 0
+    assert r.stdout.strip() == str(["--dir", str(here.resolve()), "dashboard", "--port", "9100"])
+
+
+def test_macos_app_is_built_with_osacompile_to_open_the_command(tmp_path):
+    calls = []
+    run = lambda args, **kw: calls.append(args) or type("R", (), {"returncode": 0, "stderr": ""})()
+    paths = allo_dash.install_launcher(tmp_path, platform="darwin", home=tmp_path / "home", argv=["allo-router"],
+                                       osacompile="/usr/bin/osacompile", run=run)
+    cmd, app = paths
+    assert app == tmp_path / "home" / "Applications" / "Allo Dashboard.app"
+    ((tool, o, out, e, script),) = calls
+    assert (tool, o, out, e) == ("/usr/bin/osacompile", "-o", str(app), "-e")
+    assert script == f'do shell script "open " & quoted form of "{cmd}"'
+
+
+def test_a_failed_osacompile_still_leaves_the_command(tmp_path):
+    run = lambda args, **kw: type("R", (), {"returncode": 1, "stderr": "boom"})()
+    out = []
+    paths = allo_dash.install_launcher(tmp_path, platform="darwin", home=tmp_path / "home", argv=["allo-router"],
+                                       osacompile="/usr/bin/osacompile", run=run, out=out.append)
+    assert [p.name for p in paths] == ["Allo Dashboard.command"] and "boom" in out[0]
+
+
+def test_linux_launcher_is_a_desktop_entry_run_in_a_terminal(tmp_path):
+    here, home = tmp_path / "my router 100%", tmp_path / "home"
+    here.mkdir()
+    (desk,) = allo_dash.install_launcher(here, platform="linux", home=home, argv=["/usr/bin/allo-router"])
+    assert desk == home / ".local" / "share" / "applications" / "allo-dashboard.desktop"
+    lines = dict(l.split("=", 1) for l in desk.read_text().splitlines()[1:])
+    assert lines["Type"] == "Application" and lines["Name"] == "Allo Dashboard" and lines["Terminal"] == "true"
+    folder = str(here.resolve()).replace("%", "%%")
+    assert lines["Exec"] == f'/usr/bin/allo-router --dir "{folder}" dashboard'
+    assert desk.stat().st_mode & 0o111
+
+
+def test_desktop_exec_quoting():
+    assert allo_dash._desktop_arg("plain") == "plain"
+    assert allo_dash._desktop_arg("a b") == '"a b"'
+    assert allo_dash._desktop_arg('say "hi" $x') == '"say \\\\"hi\\\\" \\\\$x"'
+    assert allo_dash._desktop_arg("50%") == "50%%"
+
+
+def test_no_launcher_on_other_platforms(tmp_path):
+    with pytest.raises(ValueError, match="dashboard"):
+        allo_dash.install_launcher(tmp_path, platform="win32", home=tmp_path, argv=["allo-router"])
+
+
+def test_cli_install_launcher_writes_it_and_starts_nothing(tmp_path, monkeypatch):
+    write_cfg(tmp_path, SHELL)
+    got = []
+    monkeypatch.setattr(allo_dash, "serve", lambda *a, **k: pytest.fail("installing must not start the server"))
+    monkeypatch.setattr(allo_dash, "install_launcher",
+                        lambda here, port, out: got.append((here, port)) or [tmp_path / "Allo Dashboard.command"])
+    out = []
+    assert allo_dash.cmd_dashboard(tmp_path, ["--install-launcher"], lambda: NOW, out=out.append) == 0
+    assert got == [(tmp_path, 8765)] and out[0].startswith("wrote ") and "close it to stop" in out[-1]
+
+
+def test_cli_install_launcher_needs_a_config_folder(tmp_path, monkeypatch):
+    monkeypatch.setattr(allo_dash, "install_launcher", lambda *a, **k: pytest.fail("no folder to point it at"))
+    out = []
+    assert allo_dash.cmd_dashboard(tmp_path, ["--install-launcher"], lambda: NOW, out=out.append) == 2
+    assert "allo-router init" in out[0]
+    with pytest.raises(SystemExit):
+        allo_dash.cmd_dashboard(tmp_path, ["--install-launcher", "--example"], lambda: NOW)
+
+
+def test_landing_and_readme_feature_the_released_dashboard():
+    root = Path(__file__).parent.parent
+    page, readme = (root / "docs" / "index.html").read_text(), (root / "README.md").read_text()
+    for text in (page, readme):
+        assert "next release" not in text.lower()
+        assert "--install-launcher" in text and "dashboard.png" in text and "Example data" in text
+    assert f'<span class="ver">{allo.__version__}</span>' in page

@@ -109,6 +109,7 @@
   .shot { margin: 0; }
   .shot img { display: block; width: 100%; height: auto; border: 1px solid var(--rule); }
   .shot figcaption { margin-top: 10px; font-size: 14px; color: var(--muted); }
+  .shot + .rows { margin-top: 26px; }
 
   footer { display: flex; flex-wrap: wrap; align-items: baseline; gap: 10px 28px; padding: 22px 0 40px; border-top: 1px solid var(--rule); font-size: 15px; color: var(--muted); }
   footer .mark { font-size: 17px; color: var(--ink); margin-right: 0; }
@@ -162,13 +163,13 @@
 <div class="wrap">
   <nav>
     <a class="mark" href="#">Allo Router</a>
+    <a href="#dashboard">Dashboard</a>
     <a href="#how">How it decides</a>
     <a href="#reviewed">Reviewed runs</a>
-    <a href="#dashboard">Dashboard</a>
     <a href="#quickstart">Quickstart</a>
     <a href="https://github.com/eudotong1/allo/blob/main/CHANGELOG.md">Changelog</a>
     <a href="https://github.com/eudotong1/allo">GitHub</a>
-    <span class="ver">0.3.0</span>
+    <span class="ver">0.4.0</span>
   </nav>
 
   <header class="hero">
@@ -178,9 +179,10 @@
       <p class="lead">You get more done, and no plan runs out while another resets with plenty left on the table. Allo Router reads what is left on each plan from files already on your computer, sends each job to the plan with the most of its limit left that may take it, and runs only the plan you reviewed.</p>
       <div class="actions">
         <a class="btn" href="#quickstart">Read the quickstart</a>
+        <a class="text" href="#dashboard">See the dashboard</a>
         <a class="text" href="https://github.com/eudotong1/allo">Source on GitHub</a>
       </div>
-      <p class="install"><b>allo-router sync</b> then <b>allo-router run</b><br>Python 3.9 or newer, no dependencies.</p>
+      <p class="install"><b>allo-router sync</b> then <b>allo-router run</b><br><b>allo-router dashboard</b> to watch it<br>Python 3.9 or newer, no dependencies.</p>
     </div>
 
     <div class="yard">
@@ -285,6 +287,25 @@
     <p><strong>Keeps your keys out.</strong> Stores no API keys. Free and MIT licensed.</p>
   </div>
 
+  <section class="part" id="dashboard">
+    <div>
+      <h2>See what it is doing</h2>
+      <p class="intro"><code>allo-router dashboard</code> opens a page in your browser that shows which job is running and on which plan, what each plan has left before it resets, what runs next and whether the overnight run will accept its plan.</p>
+    </div>
+    <div>
+      <figure class="shot">
+        <img src="dashboard.png" width="1440" height="790" alt="The Allo Router dashboard with example data: running job 14 on Codex, the next run at 03:00, and each plan's line running to its reset with queued jobs on it.">
+        <figcaption>Example data. Every plan, job and number in this screenshot is made up.</figcaption>
+      </figure>
+      <dl class="rows">
+        <div><dt>On your computer</dt><dd>Every Allo Router install has it, and it runs on your own machine. The page is served from 127.0.0.1 and loads nothing from anywhere else.</dd></div>
+        <div><dt>No login</dt><dd>No account and no sign-in. It reads the files Allo Router already keeps.</dd></div>
+        <div><dt>Your data stays put</dt><dd>Nothing it shows leaves your computer. It changes no file, never syncs and never starts a job.</dd></div>
+        <div><dt>Open it</dt><dd><code>allo-router dashboard</code> starts it and opens your browser. Run <code>allo-router dashboard --install-launcher</code> once for an Allo Dashboard you can double-click: in <code>~/Applications</code> on macOS, in your applications menu on Linux.</dd></div>
+      </dl>
+    </div>
+  </section>
+
   <section class="part" id="how">
     <div>
       <h2>How it decides</h2>
@@ -328,19 +349,8 @@
       <p>The saved plan records the readings it was made on and a hash of your plans, jobs and commands. If the file was edited, is older than an hour, or any reading, job or command changed since, the run refuses before starting anything:</p>
       <pre class="out">refusing to run plan plan.json: readings in pools.json changed since it was saved; preview again to plan on the new ones</pre>
       <p>Each job's output goes to <code>runs/</code> and a line to <code>runs.jsonl</code>. <code>allo-router report</code> turns that log into what ran where, what failed, the share of each plan's limit it used, and an estimate of what it saved, labelled as an estimate.</p>
-      <p>Coming in the next release: for a run you schedule overnight, <code>allo-router run --refresh plan.json</code> re-checks the plan you reviewed in the evening against fresh readings just before it runs. It saves it again only if every job still comes out exactly as reviewed, so nothing new gets through.</p>
+      <p>For a run you schedule overnight, <code>allo-router run --refresh plan.json</code> re-checks the plan you reviewed in the evening against fresh readings just before it runs. It saves it again only if every job still comes out exactly as reviewed, so nothing new gets through.</p>
     </div>
-  </section>
-
-  <section class="part" id="dashboard">
-    <div>
-      <h2>See what it is doing</h2>
-      <p class="intro">Coming in the next release: <code>allo-router dashboard</code> serves a read-only page on your own computer. It shows which job is running and where, what each plan has left, what runs next and whether the overnight run will accept its plan.</p>
-    </div>
-    <figure class="shot">
-      <img src="dashboard.png" width="1440" height="790" alt="The Allo Router dashboard with example data: running job 14 on Codex, the next run at 03:00, and each plan's line running to its reset with queued jobs on it.">
-      <figcaption>Example data. The page listens on 127.0.0.1 only, never syncs and never starts a job.</figcaption>
-    </figure>
   </section>
 
   <section class="part" id="quickstart">
@@ -356,7 +366,8 @@ allo-router sync                   <span class="c"># reads usage from local Clau
 allo-router set chatgpt pct=55     <span class="c"># or record a reading by hand</span>
 allo-router run                    <span class="c"># preview the exact commands; saves plan.json</span>
 allo-router run --plan plan.json --execute   <span class="c"># runs exactly that plan</span>
-allo-router report --period week   <span class="c"># what ran, what it used, what it saved (estimated)</span></code></pre>
+allo-router report --period week   <span class="c"># what ran, what it used, what it saved (estimated)</span>
+allo-router dashboard              <span class="c"># opens all of the above in your browser</span></code></pre>
       <p>The starter files describe four example plans with made-up readings, and every plan starts on the <code>dry-run</code> backend, so a first <code>--execute</code> starts nothing real. To let a plan start jobs, check the command its dry run shows, then change its <code>"backend"</code> from <code>"dry-run"</code> to <code>"shell"</code> in <code>pools.json</code>. One plan at a time.</p>
       <p>Allo Router does not check whether a provider's terms allow a given use of your plan. That is yours to read.</p>
     </div>
@@ -364,7 +375,7 @@ allo-router report --period week   <span class="c"># what ran, what it used, wha
 
   <footer>
     <span class="mark">Allo Router</span>
-    <span>0.3.0. Free and MIT licensed.</span>
+    <span>0.4.0. Free and MIT licensed.</span>
     <a href="https://github.com/eudotong1/allo">GitHub</a>
     <a href="https://github.com/eudotong1/allo/blob/main/CHANGELOG.md">Changelog</a>
     <a href="https://github.com/eudotong1/allo/blob/main/docs/architecture.md">Architecture</a>
