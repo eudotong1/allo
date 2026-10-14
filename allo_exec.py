@@ -6,8 +6,10 @@ plan to plan.json with its hash, the time it was made and a fingerprint of the r
 `run --plan plan.json --execute` runs that saved plan and nothing else. It refuses, before starting anything,
 if the file was edited, is older than --max-plan-age, or the config, readings or any job's command no longer
 match. It asks before each job (or takes --yes), runs it, and records the result in runs.jsonl with the job's
-output under runs/. It never edits pools.json or tasks.json: readings stay yours to record with
-`allo-router set`, because a finished job does not tell you how much of a plan it used.
+output under runs/. It never edits pools.json or tasks.json. For a pool with a "sync" block it also reads the
+plan's usage just before and just after each job (see allo_sync.py) and logs both readings, and the share of the
+plan limit used when that can be measured, to runs.jsonl; those readings never go into pools.json, so the
+reviewed plan still matches. A task with "recurring": "daily" or "weekly" runs once per UTC day or ISO week.
 
 Each pool opts in to execution with a "run" block in pools.json. A pool without one is never run, and the
 starter config puts every pool on the dry-run backend until you switch it to "shell".
@@ -34,6 +36,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import allo
+import allo_sync
 from allo_report import usage_from_output
 
 RUN_LOG = "runs.jsonl"
@@ -179,7 +182,8 @@ def make_backend(run_cfg):
 
 
 def previous_ok(here, plan=None):
-    """(task id, task name) -> time of its last ok run, from runs.jsonl. With `plan`, only runs of that plan.
+    """(task id, task name, period) -> time of its last ok run, from runs.jsonl. With `plan`, only runs of that plan.
+    period is None for a one-off task and the UTC day or ISO week for a recurring one (allo.recurring_period).
     The key leaves out the prompt on purpose: editing a finished job's prompt does not make it run again."""
     done, log = {}, here / RUN_LOG
     if log.exists():
@@ -189,7 +193,7 @@ def previous_ok(here, plan=None):
             except ValueError:
                 continue
             if e.get("status") == "ok" and (plan is None or e.get("plan") == plan):
-                done[(str(e.get("task_id")), e.get("task_name"))] = e.get("at")
+                done[(str(e.get("task_id")), e.get("task_name"), e.get("period"))] = e.get("at")
     return done
 
 
@@ -208,15 +212,17 @@ def select(cfg, tasks, here, now, only=None, allow_unverified=False, rerun=False
         # Jobs run in the config folder unless told otherwise, never wherever allo-router happened to be started.
         job = {"task": t, "pool": pid, "note": note, "prompt": t.get("prompt") or t["name"],
                "cwd": str(here / cwd) if cwd else str(here), "here": str(here), "backend": None, "skip": None,
-               "flags": list(flags[pid]) if pid else [], "pool_kind": pools[pid]["kind"] if pid else None}
-        key = (str(t["id"]), t["name"])
+               "flags": list(flags[pid]) if pid else [], "pool_kind": pools[pid]["kind"] if pid else None,
+               "period": allo.recurring_period(t, now), "sync": pools[pid].get("sync") if pid else None}
+        key = (str(t["id"]), t["name"], job["period"])
         if pid is None:
             job["skip"] = "unassigned: no pool fits this job"
         elif flags[pid] and not allow_unverified:
             job["skip"] = (f"pool needs a fresh reading ({', '.join(flags[pid])}): "
                            f"run `allo-router set {pid} ...` first, or pass --allow-unverified")
         elif key in done and not rerun:
-            job["skip"] = f"already ran ok at {done[key]}; pass --rerun to run it again"
+            job["skip"] = (f"already ran ok at {done[key]}" + (f" (this {t['recurring']} period, {job['period']})"
+                           if job["period"] else "") + "; pass --rerun to run it again")
         elif run_cfg is None:
             job["skip"] = f"pool {pid} has no run block; start this job yourself"
         else:
@@ -236,7 +242,7 @@ PLAN_KEYS = ("format", "created_at", "config_dir", "options", "config_hash", "re
 DEFAULT_PLAN_AGE_MIN = 60
 FUTURE_SKEW_S = 300
 # Pool fields `allo-router set` writes. If any changed, the plan was made on other readings.
-READING_KEYS = ("remaining_pct", "remaining_usd", "resets_at", "updated_at", "source")
+READING_KEYS = ("remaining_pct", "remaining_usd", "resets_at", "updated_at", "source", "last_sync")
 
 
 class PlanError(Exception):
@@ -310,7 +316,7 @@ def jobs_from_plan(plan, here, cfg, tasks, now, max_age_min):
         job = current.get(saved["task_id"])
         if job is None:
             raise PlanError(f"task #{saved['task_id']} is in it but no longer planned")
-        key = (saved["task_id"], saved["task_name"])
+        key = (saved["task_id"], saved["task_name"], job["period"])
         job["plan"] = plan["hash"]
         if saved["skip"]:
             job["skip"], job["backend"] = saved["skip"], None   # not reviewed as runnable, so it never runs
@@ -361,6 +367,11 @@ def record(here, job, res, started, secs):
              "output": str(out.relative_to(here)) if out else None, "plan": job.get("plan"),
              "tier": t.get("tier"), "est_usd": t.get("est_usd"), "pool_kind": job.get("pool_kind"),
              "pool_flags": job.get("flags", [])}
+    if job.get("period"):
+        entry["period"], entry["recurring"] = job["period"], t.get("recurring")
+    if res.get("readings"):
+        entry["readings"] = res["readings"]
+        entry["plan_usage"] = res["plan_usage"]
     if res["status"] == "skipped":
         entry["reason"], entry["skip_kind"] = res["reason"], skip_kind(res["reason"])
     usage = res["usage"] if isinstance(res.get("usage"), dict) else usage_from_output(res.get("stdout"))
@@ -397,14 +408,28 @@ def run_jobs(jobs, here, execute=False, confirm=None, out=print):
         if confirm and not confirm(job):
             skip(job, "you said no")
             continue
-        started, t0 = _stamp(), time.monotonic()
+        reads = isinstance(job.get("sync"), dict) and not isinstance(job["backend"], DryRunBackend)
+        before = allo_sync.job_reading(job["sync"], datetime.now(timezone.utc)) if reads else None
+        started, t0, start_dt = _stamp(), time.monotonic(), datetime.now(timezone.utc)
         try:
             res = job["backend"].run(job)
         except Exception as e:  # a plugged-in backend must not take down the rest of the run
             res = {"status": "error", "returncode": None, "stdout": "", "stderr": f"{type(e).__name__}: {e}"}
-        path = record(here, job, res, started, time.monotonic() - t0)
+        secs = time.monotonic() - t0
+        if reads:
+            end_dt = datetime.now(timezone.utc)
+            if job["sync"].get("settle_s"):
+                out(f"      waiting up to {job['sync']['settle_s']:g}s for a usage reading taken after the job")
+            after = allo_sync.reading_after(job["sync"], end_dt)
+            res["readings"] = {"before": before, "after": after}
+            res["plan_usage"] = allo_sync.measure(before, after, start_dt, end_dt)
+        path = record(here, job, res, started, secs)
         rc = "" if res["returncode"] is None else f", exit {res['returncode']}"
         out(f"      {res['status']}{rc}" + (f", output in {path}" if path else ""))
+        if reads:
+            pu = res["plan_usage"]
+            out("      plan used: " + (f"{pu['used_pts']:g} pts of the {pu['window']} limit (account-wide)"
+                                       if pu["measurable"] else f"not measurable ({pu['why']})"))
         if res["status"] in FAILED:
             failed += 1
             if res["stderr"].strip():
@@ -485,5 +510,5 @@ def cmd_run(here, argv, now, confirm=ask, out=print, interactive=None):
             "before readings or config change:")
         out(f"  {cmd} run --plan {shlex.quote(str(path))} --execute")
     if a.execute:
-        out("Record fresh readings with `allo-router set` before the next plan; the executor does not measure usage.")
+        out("Readings in pools.json are unchanged. Run `allo-router sync` (or `set`) before the next plan.")
     return 1 if failed else 0

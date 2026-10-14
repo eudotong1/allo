@@ -2,15 +2,24 @@
 
 All notable changes to Allo Router. Dates are MM/DD/YYYY.
 
-## Unreleased
+## 0.3.0 (10/14/2026)
 
 ### Added
-- **`allo-router report`.** Reads `runs.jsonl` and prints a markdown summary: jobs logged, routed, ran, ok, failed, skipped and dry-run, run time and CLI-reported usage, per `--period day|week` or for a `--since`/`--until` range (UTC). Lists each job's pool, backend, status, duration, usage and whether its pool's reading was fresh, and lists misroutes (failed or timed out, ran on a flagged reading, or skipped because no pool fit, the reading was stale, the run block was bad or the folder was missing). `--csv FILE` writes one row per job. Read-only; stdlib only.
+- **`allo-router sync`: readings from files already on your computer.** A pool opts in with `"sync": {"source": "claude" | "codex", "window": "week" | "5h"}`. Claude: % of the plan limit and reset time from Claude Code's own cache (`~/.claude.json`, `cachedUsageUtilization`) or the Claude Usage menu-bar app's cache (`~/.claude/.statusline-usage-cache`), whichever is fresher (`"usage_app": false` ignores the app); tokens from `~/.claude/projects/**/*.jsonl`, de-duplicated per response. Codex: % and reset from the `rate_limits` Codex logs with every turn in `~/.codex/sessions`, tokens from the same files. No network, read-only on every source.
+- **Readings are FULL, PARTIAL or UNAVAILABLE, never invented.** FULL (a limit % and a reset time for a window that has not reset) is written to the pool, with `updated_at` set to when the source took it, so an old source still shows STALE. PARTIAL (tokens, no limit) and UNAVAILABLE leave `remaining_pct` alone. A reading you typed in that is newer than the source's is kept. Every sync is recorded in the pool's `last_sync`, and the plan printout shows it.
+- **Auto-sync.** Pools with `"sync": {..., "auto": true}` are synced before `allo-router` prints a plan and before `allo-router run` previews one. Never before `run --plan`, so a reviewed plan still matches. `--no-sync` turns it off for one command.
+- **Plan used, measured.** Under `--execute`, a job on a pool with a sync block gets a usage reading just before and just after it (`settle_s` waits for the source to refresh). `runs.jsonl` records both readings and `plan_usage`: the percentage points of each window's limit the job used, only when both readings are FULL, cover the same window and the after reading postdates the job. Otherwise it says why not. It is account-wide, so other use of the plan in between is included, and labelled so. Readings around a job never go into `pools.json`.
+- **Report: "Plan used (MEASURED)"** section, per pool and per job: window, before and after %, points used, CLI-reported tokens, and why a job was not measurable. Kept apart from the API-price ESTIMATE, which is unchanged. CSV gains `plan_window`, `plan_before_pct`, `plan_after_pct`, `plan_used_pts`, `plan_measurable`, `plan_not_measurable_why` and `recurring_period`.
+- **Recurring jobs.** A task with `"recurring": "daily"` or `"weekly"` runs once per UTC day or ISO week: the finished-job check keys on task id, name and that period. One-off tasks keep the id-and-name key.
+- **`allo-router report`** (first released here). Reads `runs.jsonl` and prints a markdown summary: jobs logged, routed, ran, ok, failed, skipped and dry-run, run time and CLI-reported usage, per `--period day|week` or for a `--since`/`--until` range (UTC). Lists each job's pool, backend, status, duration, usage and whether its pool's reading was fresh, and lists misroutes (failed or timed out, ran on a flagged reading, or skipped because no pool fit, the reading was stale, the run block was bad or the folder was missing). `--csv FILE` writes one row per job. Read-only; stdlib only.
 - **Estimated usage saved**, labelled ESTIMATE with its method in every report: each job's cost basis (CLI-reported cost, else `est_usd`) times the difference between a baseline's price factor and that of the pool it ran on. `--baseline api` (default), `max` or a pool id; `--price POOL=FACTOR` overrides the defaults (subscription 0.0, credit 1.0).
 
 ### Changed
+- `readings_fingerprint` in a saved plan also covers `last_sync`, so syncing after a preview refuses that plan, the same as `set`.
+- Subcommands' own `--help` (`run`, `report`, `sync`) is no longer swallowed by the top-level usage.
 - **`runs.jsonl` records more.** Each line now also has `tier`, `est_usd`, `pool_kind`, `pool_flags` (the pool's reading flags when it ran) and, when the CLI printed it as JSON (`claude -p --output-format json`, `codex exec --json`) or a backend returned it, `usage`. Under `--execute`, skipped jobs are logged as status `skipped` with `reason` and `skip_kind`; they never count as finished. A preview still logs nothing.
 - Backends may return `usage` in their result dict.
+- New `runs.jsonl` fields: `period` and `recurring` for recurring tasks; `readings` (`before`, `after`) and `plan_usage` for jobs on pools with a sync block.
 
 ## 0.2.0 (10/14/2026)
 

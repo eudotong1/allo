@@ -4,18 +4,20 @@ The agent router for maximizing usage. Site: https://allorouter.com
 
 You pay for several AI plans. Each has its own weekly limit and its own reset time. Some capacity goes unused while another plan runs dry. This tool tells you which plan should take which job before the next reset, and can then start those jobs for you.
 
-It has three parts:
+It has four parts:
 - The **planner** reads two JSON files you keep and prints a proposal. It never logs in to a plan, never starts a job, never sends anything and makes no network calls.
+- **Sync** (`allo-router sync`) fills in how much of each plan is used from files Claude Code and Codex already keep on your computer, where they record it. Where a source gives no limit, it says so instead of guessing.
 - The **executor** (`allo-router run`) previews that proposal and saves it as a plan file. `allo-router run --plan plan.json --execute` then runs exactly that reviewed plan through the CLI you configured for each pool, such as `claude -p` or `codex exec`, asking before each job. If anything changed since you reviewed it, it refuses and starts nothing.
-- The **report** (`allo-router report`) reads the run log and summarizes what was routed where, what worked, what misrouted, and an estimate of the usage saved. It is read-only.
+- The **report** (`allo-router report`) reads the run log and summarizes what was routed where, what worked, what misrouted, the share of each plan's limit jobs actually used (measured, where it can be), and a separately labelled estimate of the usage saved. It is read-only.
 
 ## Quickstart
-Needs Python 3.9 or newer. No dependencies. Install with `pip install .` from this folder (not on PyPI yet), or run `python3 allo.py` directly.
+Needs Python 3.9 or newer. No dependencies. Install with `pip install .` (or `uv tool install .`) from this folder (not on PyPI yet), or run `python3 allo.py` directly.
 
     mkdir my-router && cd my-router
     allo-router init                   # writes pools.json and tasks.json
     allo-router                        # prints the plan
-    allo-router set chatgpt pct=55     # record a fresh reading
+    allo-router set chatgpt pct=55     # record a fresh reading by hand
+    allo-router sync                   # or read it from local Claude Code / Codex files (pools with a "sync" block)
     allo-router run                    # preview: the exact command each job would run; saves plan.json
     allo-router run --plan plan.json --execute   # runs exactly that plan, asking before each job
     allo-router report --period week   # what ran, where, and what it saved (an estimate)
@@ -38,7 +40,7 @@ Opt in one pool at a time. Pools you leave on `dry-run` stay planned and logged 
 
 ## What you put in
 - `pools.json`: one entry per plan. Subscriptions carry `remaining_pct`. API credit carries `remaining_usd`. Each has `resets_at` (UTC) and the data `tiers` it may touch. A pool that should be runnable gets a `run` block (below).
-- `tasks.json`: each job has a `tier`, a rough `est_usd`, whether it `needs` the `api`, a `priority`, and optionally the `prompt` to send (defaults to its `name`) and a `cwd` to run in.
+- `tasks.json`: each job has a `tier`, a rough `est_usd`, whether it `needs` the `api`, a `priority`, and optionally the `prompt` to send (defaults to its `name`), a `cwd` to run in, and `"recurring": "daily"` or `"weekly"` for a job that should run once per UTC day or ISO week.
 
 A `run` block names a backend:
 
@@ -46,6 +48,25 @@ A `run` block names a backend:
     "run": {"backend": "dry-run"}
 
 `command` is a list, not a shell string: it is run directly, never through a shell, so nothing in a prompt can start another command. Items may use `{prompt}`, `{task_id}`, `{task_name}` and `{tier}`. Leave `{prompt}` out and the prompt is sent on stdin instead. `env` adds environment variables, `cwd` sets the working folder, relative to the config folder. Without one, jobs run in the config folder itself, not wherever you launched `allo-router`. Never put API keys or other secrets in `pools.json`; the CLI should already be logged in. The `dry-run` backend never starts anything, which is useful for a pool you want planned but not yet wired up. It accepts the same `command`, `env` and `cwd` as `shell` and only shows them, so switching to `shell` is a one-word change.
+
+## Sync: readings from your own computer
+A pool opts in with a `sync` block:
+
+    "sync": {"source": "claude", "window": "week", "auto": true, "settle_s": 180}
+
+`allo-router sync` reads every such pool (`--dry-run` to only print, `--pool ID` for one). With `"auto": true` the pool is also synced before `allo-router` prints a plan and before `allo-router run` previews one, never before a saved plan runs. `--no-sync` skips it for one command.
+
+| source | % of plan limit and reset time | tokens |
+|---|---|---|
+| `claude` | Claude Code's own cache in `~/.claude.json` (`cachedUsageUtilization`, refreshed on Claude Code's own schedule, which can leave it days old), or the Claude Usage menu-bar app's `~/.claude/.statusline-usage-cache`, whichever is fresher | `~/.claude/projects/**/*.jsonl`, one count per API response |
+| `codex` | the `rate_limits` Codex logs with every turn in `~/.codex/sessions` (5-hour and weekly windows, as your plan has them) | the same session files |
+
+Each reading is labelled:
+- **FULL**: the source gave the % of the plan limit used and when that window resets, and it has not reset since. Sync writes `remaining_pct = 100 - used`, `resets_at`, and `updated_at` = when the source took the reading (not when you synced), so an old source still shows STALE. A reading you typed in that is newer is kept.
+- **PARTIAL**: tokens only, no limit. `remaining_pct` is left as it was. Tokens are never turned into a percentage.
+- **UNAVAILABLE**: nothing usable, with the reason.
+
+`window` picks which limit sets `remaining_pct` (`week` by default, or `5h`); both are recorded when the source has them. `home` points at another config folder; `"usage_app": false` ignores the Claude Usage app, which gets its numbers from claude.ai with your browser login (Allo Router only reads the file it leaves). These are undocumented local file formats: when one changes, sync reports UNAVAILABLE rather than a wrong number. Claude readings are whole percents.
 
 ## How it decides
 - Pools are ranked by urgency: what is left divided by hours until reset.
@@ -77,9 +98,9 @@ The hash catches accidental edits and drift. It is not a signature: anyone who c
 - Start anything without `--execute`, and execute anything but a saved plan that still matches (above). Without a terminal to ask you, it also needs `--yes`.
 - Run a job on a pool that has no `run` block. Those jobs stay yours to start.
 - Run on a pool flagged STALE, NO READING, NO RESET TIME or RESET PASSED. Record a fresh reading with `allo-router set`, or preview with `--allow-unverified`.
-- Run a job that already finished ok (per `runs.jsonl`) unless you preview with `--rerun`. A job counts as finished by its task `id` and `name`, not its prompt, so rewording a finished job's `prompt` does not run it again. To run it with the new prompt, preview with `--rerun --only <id>`, or add it as a new task.
+- Run a job that already finished ok (per `runs.jsonl`) unless you preview with `--rerun`. A job counts as finished by its task `id` and `name`, not its prompt, so rewording a finished job's `prompt` does not run it again. To run it with the new prompt, preview with `--rerun --only <id>`, or add it as a new task. A `recurring` task counts as finished for the current UTC day or ISO week only.
 - Pass a prompt that starts with `-` where the CLI would read it as an option. Put `"--"` before `{prompt}` in `command` if your CLI supports it.
-- Update your readings. A finished job does not say how much of a plan it used, so `pools.json` and `tasks.json` are never edited. Each job's output goes to `runs/` and a one-line record to `runs.jsonl`. Under `--execute`, a job that is skipped also gets a line (status `skipped`, with the reason), so the report can show it.
+- Update your readings. `pools.json` and `tasks.json` are never edited. For a pool with a `sync` block it reads usage just before and after each job and logs both to `runs.jsonl` with the share of the limit used (below); run `allo-router sync` before the next plan. Each job's output goes to `runs/` and a one-line record to `runs.jsonl`. Under `--execute`, a job that is skipped also gets a line (status `skipped`, with the reason), so the report can show it.
 
 Other flags: `--only 1,3` limits the preview to those task ids. `allo-router run --help` lists them all.
 
@@ -93,7 +114,9 @@ Other flags: `--only 1,3` limits the preview to those task ids. `allo-router run
 
 It shows, per period: jobs logged and routed, how many ran, succeeded, failed or were skipped, run time, and usage where the CLI reported it. Per job: pool, backend, status, duration, reported usage and whether the pool's reading was fresh when it ran.
 
-**Usage.** Allo Router does not measure usage. When a CLI prints its own usage as JSON, the executor keeps it: `claude -p --output-format json` reports a cost (API list price, even on a subscription) and tokens, `codex exec --json` reports tokens. With plain-text output the report says `not reported`.
+**Plan used (MEASURED).** For jobs on a pool with a `sync` block, the report shows the plan's own usage reading before and after each job and the difference, in percentage points of that window's limit, plus the tokens the CLI reported. It is shown only when both readings are FULL, cover the same window (no reset in between) and the after reading was taken after the job ended; otherwise the row says why not. Set `settle_s` so the executor waits for the source to refresh (the Claude Usage app refreshes every few minutes; Codex logs a reading with each turn). The difference is account-wide: any other use of the same plan between the two readings is in it. Claude reports whole percents, so a small job often reads 0 pts.
+
+**Tokens.** When a CLI prints its own usage as JSON, the executor keeps it: `claude -p --output-format json` reports a cost (API list price, even on a subscription) and tokens, `codex exec --json` reports tokens. With plain-text output the report says `not reported`.
 
 **Misroutes** are jobs that failed or timed out, ran on a pool whose reading was flagged (via `--allow-unverified`), or were skipped because no pool fit, the pool needed a fresh reading, the run block was bad or the working folder was missing. A skip because the job already ran, its pool has no run block, or you said no is listed but is not a misroute.
 
@@ -101,19 +124,19 @@ It shows, per period: jobs logged and routed, how many ran, succeeded, failed or
 - Each job that ran gets a cost basis: the CLI-reported cost, else the task's `est_usd`. Jobs with neither are left out and counted.
 - Each pool gets a price factor: `credit_usd` 1.0 (you pay API prices), `subscription` 0.0 (already paid for; the planner only routes to a plan with headroom, so the job uses capacity that expires at reset otherwise). Change one with `--price claude_work=0.2`.
 - The baseline is the same jobs at one factor: `--baseline api` (default, every job at API price), `--baseline max` (every job on the priciest pool) or `--baseline <pool id>`.
-- Est. saved = cost basis x (baseline factor - factor of the pool the job ran on), summed. It ignores whether the job would have fit on the baseline pool and says nothing about how much of a plan's limit was used.
+- Est. saved = cost basis x (baseline factor - factor of the pool the job ran on), summed. It ignores whether the job would have fit on the baseline pool. How much of a plan's limit was used is the measured section above, never this estimate.
 
 Logs written by 0.2.0 lack skips, reading flags and usage; the report shows those fields as `not recorded`.
 
 ## What it does not do
-- It does not read your usage from any provider. You type the numbers in. Providers do not expose consumer-plan usage in a stable way, so any automatic reader would break without warning.
+- It does not contact any provider for usage. `sync` reads only files on your computer, and only where those files hold a limit does it record a percentage. Those formats are undocumented and may change; when they do, sync says UNAVAILABLE and you type the numbers in with `set`.
 - It does not check whether a provider's terms allow a given use of your plan, including running a CLI non-interactively. That is yours to read.
 - Cost estimates are your guesses. The planner does not measure them.
-- No dashboard and no built-in scheduler yet; the report is markdown and CSV. See [docs/roadmap.md](docs/roadmap.md).
+- No dashboard and no built-in scheduler yet; the report is markdown and CSV. A saved plan can be run from cron or launchd (`run --plan plan.json --execute --yes --max-plan-age 300`); something still has to preview a fresh plan before each run. See [docs/roadmap.md](docs/roadmap.md).
 
 ## More
-- [CHANGELOG.md](CHANGELOG.md): what changed in each version. This is 0.2.0; `allo-router --version` prints it.
-- [docs/architecture.md](docs/architecture.md): how the planner and executor fit together, and how to write a backend.
+- [CHANGELOG.md](CHANGELOG.md): what changed in each version. This is 0.3.0; `allo-router --version` prints it.
+- [docs/architecture.md](docs/architecture.md): how the planner, sync, executor and report fit together, and how to write a backend.
 - [docs/roadmap.md](docs/roadmap.md): what is next.
 - [examples/](examples/): the starter config and a custom backend.
 

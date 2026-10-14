@@ -9,7 +9,10 @@ the --csv file you name.
   allo-router report --baseline max             compare against putting every job on the priciest pool
   allo-router report --price claude_work=0.2    value a pool at 0.2x API price instead of its default
 
-Usage saved is an ESTIMATE, never a measurement. How it is worked out is printed with every report (METHOD).
+Two kinds of numbers, kept apart:
+- Plan used (MEASURED): for pools with a "sync" block, the share of the plan limit each job used, from usage
+  readings taken just before and after it, plus the tokens the CLI reported. Shown only where it can be measured.
+- Usage saved (ESTIMATE): an API-price model, never a measurement. Its method is printed with every report.
 """
 import argparse
 import csv
@@ -41,8 +44,8 @@ METHOD = """\
 - Baseline: the same jobs, all at the baseline's factor ({baseline}).
 - Est. saved = sum over jobs of cost basis x (baseline factor - factor of the pool it ran on). It can be
   negative when the router used a pricier pool than the baseline.
-- Not counted: whether a job would have fit on the baseline pool at all, retries, and any real plan usage.
-  Usage is not measured by Allo Router; record readings with `allo-router set`."""
+- Not counted: whether a job would have fit on the baseline pool at all, and retries. Measured plan use is
+  reported separately under "Plan used" and never feeds this estimate."""
 
 
 def usage_from_output(text):
@@ -227,6 +230,65 @@ def summarize(rows):
     return s
 
 
+def pts(x):
+    return "n/a" if x is None else f"{x:g} pts"
+
+
+def pct(x):
+    return "?" if x is None else f"{x:g}%"
+
+
+def tokens_of(u):
+    """(in, cache, out) tokens from a usage dict. Claude counts cache outside input_tokens; Codex inside it."""
+    u = u or {}
+    return (u.get("input_tokens", 0), u.get("cache_read_input_tokens", 0) + u.get("cache_creation_input_tokens", 0),
+            u.get("output_tokens", 0))
+
+
+def plan_used_section(rows):
+    """MEASURED share of the plan limit per job and per pool, and CLI-reported tokens. No estimates here."""
+    ran = [r for r in rows if r["started"]]
+    lines = ["## Plan used (MEASURED from usage readings, not an estimate)", ""]
+    if not any(r["e"].get("plan_usage") for r in ran):
+        return lines + ["No job in this range has usage readings. They are taken around each job on pools with a "
+                        "\"sync\" block (allo-router 0.3.0 and later).", ""]
+    lines += ["| pool | window | jobs with readings | measurable | plan used (sum) | tokens in / cache / out (CLI) |",
+              "|---|---|---:|---:|---:|---|"]
+    for pool in sorted({r["e"].get("pool") for r in ran if r["e"].get("pool")}):
+        rs = [r for r in ran if r["e"].get("pool") == pool]
+        withr = [r for r in rs if r["e"].get("plan_usage")]
+        meas = [r["e"]["plan_usage"] for r in withr if r["e"]["plan_usage"].get("measurable")]
+        windows = sorted({r["e"]["plan_usage"].get("window") for r in withr} - {None}) or ["-"]
+        t = [tokens_of(r["e"].get("usage")) for r in rs if r["e"].get("usage")]
+        tok = (f"{sum(x[0] for x in t):,} / {sum(x[1] for x in t):,} / {sum(x[2] for x in t):,} ({len(t)} of {len(rs)} jobs)"
+               if t else "not reported")
+        lines.append(f"| {pool} | {', '.join(windows)} | {len(withr)} of {len(rs)} | {len(meas)} | "
+                     f"{pts(sum(m['used_pts'] for m in meas)) if meas else 'n/a'} | {tok} |")
+    lines += ["", "| when (UTC) | task | pool | window | before | after | plan used | other windows | tokens in / cache / out |",
+              "|---|---|---|---|---:|---:|---|---|---|"]
+    for r in ran:
+        e, pu = r["e"], r["e"].get("plan_usage")
+        if not pu:
+            continue
+        w = pu.get("windows", {}).get(pu.get("window"), {})
+        used = pts(pu["used_pts"]) if pu.get("measurable") else "not measurable: " + pu.get("why", "?")
+        others = "; ".join(f"{k} {pts(v['used_pts']) if 'used_pts' in v else v.get('why', '?')}"
+                           for k, v in sorted(pu.get("windows", {}).items()) if k != pu.get("window"))
+        i, c, o = tokens_of(e.get("usage"))
+        tok = f"{i:,} / {c:,} / {o:,}" if e.get("usage") else "not reported"
+        lines.append(f"| {e['_at']:%m/%d/%Y %H:%M} | #{e.get('task_id')} {cell(e.get('task_name'))} | {e.get('pool')} | "
+                     f"{pu.get('window') or ''} | {pct(w.get('before_pct'))} | {pct(w.get('after_pct'))} | "
+                     f"{cell(used)} | {cell(others)} | {tok} |")
+    res = sorted({e_pu.get("resolution_pts") for e_pu in (r["e"].get("plan_usage") or {} for r in ran)} - {None})
+    lines += ["", "Plan used = the plan's own usage reading after the job minus the one before, in percentage points "
+              "of that window's limit. It is account-wide: anything else using the same plan between the two "
+              "readings is in it too. It is shown only when both readings are FULL, cover the same window (same "
+              "reset time) and the after reading was taken after the job ended."
+              + (f" Claude readings are whole percents, so a small job can read 0 pts (resolution {res[0]:g} pt)."
+                 if res else ""), ""]
+    return lines
+
+
 def render(here, rows, prices, scope, bad, now):
     lines = ["# Allo Router report", "",
              f"- Config folder: `{here.resolve()}`",
@@ -251,6 +313,7 @@ def render(here, rows, prices, scope, bad, now):
               "dry-run backend jobs. `ran` counts jobs that actually started. Logs written by 0.2.0 only show jobs "
               "that started; skips are logged after that.", ""]
 
+    lines += plan_used_section(rows)
     lines += ["## Estimated usage saved (ESTIMATE, not a measurement)", "",
               f"Baseline: {prices.base_label}.", "",
               "| pool | kind | price factor | jobs priced | cost basis | est. cost | baseline est. | est. saved |",
@@ -301,7 +364,9 @@ CSV_FIELDS = ("period", "at", "task_id", "task_name", "pool", "pool_kind", "back
               "seconds", "skip_kind", "reason", "pool_flags", "reported_cost_usd", "input_tokens", "output_tokens",
               "cache_read_input_tokens", "cache_creation_input_tokens", "cached_input_tokens",
               "cost_basis_usd", "cost_basis_source", "price_factor", "baseline_factor", "est_cost_usd",
-              "est_baseline_usd", "est_saved_usd", "misroute", "plan", "output")
+              "est_baseline_usd", "est_saved_usd", "plan_window", "plan_before_pct", "plan_after_pct",
+              "plan_used_pts", "plan_measurable", "plan_not_measurable_why", "recurring_period", "misroute", "plan",
+              "output")
 
 
 def write_csv(path, rows, prices):
@@ -320,7 +385,17 @@ def write_csv(path, rows, prices):
                         "cost_basis_usd": r["basis"], "cost_basis_source": r["basis_source"],
                         "price_factor": r["factor"], "baseline_factor": prices.base if r["basis"] is not None else None,
                         "est_cost_usd": r["est"], "est_baseline_usd": r["base"], "est_saved_usd": r["saved"],
+                        **plan_csv(e.get("plan_usage")), "recurring_period": e.get("period"),
                         "misroute": "; ".join(r["misroute"]), "plan": e.get("plan"), "output": e.get("output")})
+
+
+def plan_csv(pu):
+    if not pu:
+        return {}
+    w = pu.get("windows", {}).get(pu.get("window"), {})
+    return {"plan_window": pu.get("window"), "plan_before_pct": w.get("before_pct"), "plan_after_pct": w.get("after_pct"),
+            "plan_used_pts": pu.get("used_pts"), "plan_measurable": pu.get("measurable"),
+            "plan_not_measurable_why": None if pu.get("measurable") else pu.get("why")}
 
 
 def _optional_json(path):

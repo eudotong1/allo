@@ -5,14 +5,18 @@ Reads pools.json and tasks.json from the directory you point it at (default: cur
 The planner in this file is read-only. It never calls a network, never sends anything and never starts a job.
 Unknown readings are printed as unknown, not guessed. Starting jobs lives in allo_exec.py, behind `run`.
 The report on what ran lives in allo_report.py, behind `report`; it is read-only too.
+Readings can be typed in with `set` or read from local files with `sync` (allo_sync.py); pools that opt in with
+"sync": {..., "auto": true} are synced before a plan is printed or previewed.
 
   allo-router                      print the plan
   allo-router set <pool> pct=40    update a reading (also usd=, reset=ISO-UTC, note=)
+  allo-router sync                 read plan usage from local Claude Code / Codex files into pools.json; see allo_sync.py
   allo-router init                 write a sample pools.json and tasks.json (dates relative to now)
   allo-router run                  preview each job and save the plan to plan.json; see allo_exec.py
   allo-router run --plan plan.json --execute   run exactly that reviewed plan through each pool's backend
   allo-router report               summarize runs.jsonl as markdown (--period day|week, --since, --csv FILE)
   allo-router --dir examples       use another folder
+  allo-router --no-sync            do not auto-sync before printing or previewing a plan
   allo-router --version            print the version
 """
 import json
@@ -20,8 +24,9 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 STALE_H = 24
+RECURRING = ("daily", "weekly")
 
 # Starter files written by `allo-router init`. Kept in code so a pip install works without extra data files.
 # Every starter pool uses the dry-run backend, so a first `run --execute` cannot start a real agent.
@@ -174,6 +179,20 @@ def parse(ts):
     return d
 
 
+def recurring_period(task, now):
+    """For a recurring task, the period it runs once in: the UTC day ("2026-10-14") or ISO week ("2026-W42").
+    None for a one-off task. A job counts as finished by task id, name and this period."""
+    r = task.get("recurring")
+    if r is None:
+        return None
+    if r not in RECURRING:
+        raise SystemExit(f"task {task.get('id')}: recurring {r!r}; use {' or '.join(RECURRING)}")
+    if r == "daily":
+        return now.astimezone(timezone.utc).date().isoformat()
+    y, w, _ = now.astimezone(timezone.utc).isocalendar()
+    return f"{y}-W{w:02d}"
+
+
 def hours(a, b):
     return (a - b).total_seconds() / 3600
 
@@ -281,6 +300,11 @@ def render(here, now):
             lines.append(f"      eligible pools by tier: {', '.join(elig) or 'none'}")
     if any(r["p"]["kind"] == "credit_usd" for r in rows):
         lines += ["", f"Credit left after plan (reserve held): ${left:.0f}"]
+    synced = [(r["p"]["id"], r["p"]["last_sync"]) for r in rows if isinstance(r["p"].get("last_sync"), dict)]
+    if synced:
+        lines += [""] + [f"Last sync {pid}: {s.get('status')} at {s.get('taken_at')}"
+                         + (f", reading as of {s['as_of']}" if s.get("as_of") else "")
+                         + (f" ({s['note']})" if s.get("note") else "") for pid, s in synced]
     unk = [r["p"]["label"] for r in rows if "NO READING" in r["flags"] or "STALE" in r["flags"]]
     if unk:
         lines += ["", "NEEDS A FRESH READING BEFORE TRUSTING THE PLAN: " + "; ".join(unk)]
@@ -344,10 +368,13 @@ def cmd_init(here):
 
 
 def main(argv):
-    if "-h" in argv or "--help" in argv:
+    # run, report and sync have their own --help; everything else gets this file's usage.
+    if ("-h" in argv or "--help" in argv) and not {"run", "report", "sync"} & set(argv[:3]):
         print(__doc__)
         return
     here = Path(".")
+    autosync = "--no-sync" not in argv
+    argv = [a for a in argv if a != "--no-sync"]
     if "--dir" in argv:
         i = argv.index("--dir")
         if i + 1 >= len(argv):
@@ -361,13 +388,23 @@ def main(argv):
             cmd_init(here)
         elif argv and argv[0] == "set":
             cmd_set(here, argv[1:])
+        elif argv and argv[0] == "sync":
+            import allo_sync
+            sys.exit(allo_sync.cmd_sync(here, argv[1:], datetime.now(timezone.utc)))
         elif argv and argv[0] == "run":
             import allo_exec  # imported here so planning never loads the code that starts processes
+            if autosync and "--plan" not in argv and not {"-h", "--help"} & set(argv):
+                # A saved plan is never re-synced: new readings would (rightly) make it refuse to run.
+                import allo_sync
+                allo_sync.auto_sync(here, datetime.now(timezone.utc))
             sys.exit(allo_exec.cmd_run(here, argv[1:], datetime.now(timezone.utc)))
         elif argv and argv[0] == "report":
             import allo_report
             sys.exit(allo_report.cmd_report(here, argv[1:], datetime.now(timezone.utc)))
         else:
+            if autosync and not argv:
+                import allo_sync
+                allo_sync.auto_sync(here, datetime.now(timezone.utc))
             print(render(here, datetime.now(timezone.utc)))
     except FileNotFoundError as e:
         sys.exit(f"{Path(e.filename).name} not found in {here.resolve()}; run `allo-router init` to write a starter, or use --dir")
