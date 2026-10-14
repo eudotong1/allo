@@ -31,7 +31,7 @@ Each assignment becomes a job dict: `task`, `pool`, `note`, `prompt` (task `prom
 
 1. No pool fits: `unassigned`.
 2. The pool has any flag and `--allow-unverified` is off: needs a fresh reading.
-3. `runs.jsonl` has an `ok` entry for the same task id and name and `--rerun` is off: already ran.
+3. `runs.jsonl` has an `ok` entry for the same task id and name and `--rerun` is off: already ran. The prompt is deliberately not part of this key, so editing a finished job's prompt does not run it again; a test locks this in.
 4. The pool has no `run` block: start it yourself.
 5. The run block is invalid: the backend's own error.
 

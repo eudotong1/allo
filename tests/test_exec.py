@@ -242,6 +242,21 @@ def test_finished_job_is_not_run_twice_unless_rerun(tmp_path):
     assert len(log(tmp_path)) == 2
 
 
+def test_editing_a_finished_jobs_prompt_does_not_run_it_again(tmp_path):
+    # A job is "done" by task id and name, not by prompt: rewording a finished job's prompt must not
+    # spend another run on it. --rerun (or a new task) is the way to run it again with the new prompt.
+    write_cfg(tmp_path, {"backend": "shell", "command": ECHO_ARG})
+    execute(tmp_path)
+    edited = [{"id": 1, "name": "Say hi", "tier": "public", "est_usd": 0, "needs": [], "priority": 1,
+               "prompt": "hello, reworded"}]
+    write_cfg(tmp_path, {"backend": "shell", "command": ECHO_ARG}, edited)
+    code, out = execute(tmp_path)
+    assert code == 0 and "already ran ok" in out and len(log(tmp_path)) == 1
+    assert plan_file(tmp_path)["jobs"][0]["skip"].startswith("already ran ok")
+    execute(tmp_path, "--rerun")
+    assert len(log(tmp_path)) == 2 and "ARG:hello, reworded" in (tmp_path / log(tmp_path)[-1]["output"]).read_text()
+
+
 def test_failed_job_is_retried_on_the_next_run(tmp_path):
     write_cfg(tmp_path, {"backend": "shell", "command": [PY, "-c", "raise SystemExit(1)"]})
     execute(tmp_path)

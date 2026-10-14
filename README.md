@@ -74,7 +74,7 @@ The hash catches accidental edits and drift. It is not a signature: anyone who c
 - Start anything without `--execute`, and execute anything but a saved plan that still matches (above). Without a terminal to ask you, it also needs `--yes`.
 - Run a job on a pool that has no `run` block. Those jobs stay yours to start.
 - Run on a pool flagged STALE, NO READING, NO RESET TIME or RESET PASSED. Record a fresh reading with `allo-router set`, or pass `--allow-unverified`.
-- Run a job that already finished ok (per `runs.jsonl`) unless you pass `--rerun`.
+- Run a job that already finished ok (per `runs.jsonl`) unless you preview with `--rerun`. A job counts as finished by its task `id` and `name`, not its prompt, so rewording a finished job's `prompt` does not run it again. To run it with the new prompt, preview with `--rerun --only <id>`, or add it as a new task.
 - Pass a prompt that starts with `-` where the CLI would read it as an option. Put `"--"` before `{prompt}` in `command` if your CLI supports it.
 - Update your readings. A finished job does not say how much of a plan it used, so `pools.json` and `tasks.json` are never edited. Each job's output goes to `runs/` and a one-line record to `runs.jsonl`.
 
