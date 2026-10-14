@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Allo Router</title>
-  <meta name="description" content="Allo Router plans which AI plan should take which job before limits reset. It prints a proposal and does not run the jobs.">
+  <meta name="description" content="Allo Router plans which AI plan should take which job before limits reset, then runs exactly the plan you reviewed. Nothing starts until you say so.">
   <style>
     :root {
       color-scheme: light;
@@ -41,6 +41,11 @@
       font-weight: 650;
     }
     p { margin: 0.8rem 0; }
+    ul {
+      margin: 0.8rem 0;
+      padding-left: 1.2rem;
+    }
+    li { margin: 0.45rem 0; }
     .lead {
       font-size: 1.2rem;
       line-height: 1.45;
@@ -49,7 +54,7 @@
     code, pre {
       font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
     }
-    p code {
+    p code, li code {
       font-size: 0.92em;
     }
     pre {
@@ -73,20 +78,40 @@
 <body>
   <main>
     <h1>Allo Router</h1>
-    <p class="lead">Allo Router plans which AI plan should take which job before limits reset. It prints a proposal. It does not run the jobs.</p>
+    <p class="lead">Allo Router plans which AI plan should take which job before limits reset. It can then run the jobs, but only the plan you reviewed, and only when you say so.</p>
     <p>If you pay for more than one AI plan, each one has its own limit and its own reset. Capacity on one can expire while another has already run out. You list your plans, what is left, when each resets, and your jobs. Allo Router ranks the plans by how much is left against how soon each resets, and tells you where each job should go first: the plan closest to expiring that can still take it.</p>
-    <p>It reads two files you keep. One is your plans: what is left, when each resets, and which kinds of data each may touch. The other is your jobs. You type the readings in. A reading older than 24 hours is flagged. You start the jobs yourself.</p>
-    <p>It does not call a plan, log in, send anything, or make a network request. Nothing is started for you.</p>
+    <p>It reads two files you keep. One is your plans: what is left, when each resets, and which kinds of data each may touch. The other is your jobs. You type the readings in. A reading older than 24 hours is flagged.</p>
+    <p>The planner never logs in, sends anything or makes a network request. Starting jobs is a separate step, <code>allo-router run</code>, which runs the CLI you set up for each plan, such as <code>claude -p</code> or <code>codex exec</code>. Allo Router stores no API keys; the CLI should already be logged in.</p>
 
-    <h2>Install</h2>
+    <h2>New in 0.2.0</h2>
+    <ul>
+      <li><strong>An executor.</strong> <code>allo-router run</code> turns the plan into jobs and runs each through its plan's backend: <code>shell</code> (a command list, never passed through a shell), <code>dry-run</code>, or your own. It asks before each job, logs every run to <code>runs.jsonl</code> and keeps each job's output in <code>runs/</code>. It never edits your plans or jobs files.</li>
+      <li><strong>Preview by default.</strong> <code>allo-router run</code> on its own starts nothing. It shows every job, its plan and the exact command, and saves that as <code>plan.json</code>.</li>
+      <li><strong>Runs exactly the plan you reviewed.</strong> <code>allo-router run --plan plan.json --execute</code> runs only that saved plan. It refuses, and starts nothing, if the file was edited, is older than 60 minutes (the default), your readings or config changed, or any job would now come out differently. <code>--execute</code> without a saved plan is refused.</li>
+      <li><strong>Safe starter config.</strong> Every starter plan is on the <code>dry-run</code> backend, so a first <code>--execute</code> on a new install cannot start a real agent. The dry run shows the command it would run.</li>
+    </ul>
+    <p>Also new: <code>allo-router --version</code>, a guard against running a finished job twice, and API jobs that stay unassigned when the credit pool cannot take them, instead of falling back to a subscription. Full list in the <a href="https://github.com/eudotong1/allo/blob/main/CHANGELOG.md">changelog</a>.</p>
+
+    <h2>Quickstart</h2>
     <p>Needs Python 3.9 or newer. No dependencies. Install with <code>pip install .</code> from a checkout of the repository (not on PyPI yet), or run <code>python3 allo.py</code> directly.</p>
     <pre><code>mkdir my-router &amp;&amp; cd my-router
 allo-router init                   # writes pools.json and tasks.json
 allo-router                        # prints the plan
-allo-router set &lt;pool&gt; pct=55      # record a fresh reading</code></pre>
-    <p>Without installing, replace <code>allo-router</code> with <code>python3 /path/to/allo.py</code>.</p>
+allo-router set chatgpt pct=55     # record a fresh reading
+allo-router run                    # preview: the exact command each job would run; saves plan.json
+allo-router run --plan plan.json --execute   # runs exactly that plan, asking before each job</code></pre>
+    <p>Without installing, replace <code>allo-router</code> with <code>python3 /path/to/allo.py</code>. The starter files describe four example plans with made-up readings. Replace them with yours before trusting anything.</p>
+    <p>To let a plan start real jobs, check the command its dry run shows against the CLI you have installed, then change that plan's <code>"backend"</code> from <code>"dry-run"</code> to <code>"shell"</code> in <code>pools.json</code>. Do one plan at a time.</p>
+    <pre><code>"run": {"backend": "shell", "command": ["codex", "exec", "{prompt}"]}</code></pre>
 
-    <p class="foot">Free and MIT licensed. Source: <a href="https://github.com/eudotong1/allo">github.com/eudotong1/allo</a>.</p>
+    <h2>More</h2>
+    <ul>
+      <li><a href="https://github.com/eudotong1/allo/blob/main/docs/architecture.md">Architecture</a>: how the planner and executor fit together, and how to write a backend.</li>
+      <li><a href="https://github.com/eudotong1/allo/blob/main/docs/roadmap.md">Roadmap</a>: what is next.</li>
+      <li><a href="https://github.com/eudotong1/allo/blob/main/CHANGELOG.md">Changelog</a>: what changed in each version.</li>
+    </ul>
+
+    <p class="foot">Allo Router 0.2.0. Free and MIT licensed. Source: <a href="https://github.com/eudotong1/allo">github.com/eudotong1/allo</a>.</p>
   </main>
 </body>
 </html>
