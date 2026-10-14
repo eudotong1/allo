@@ -1,127 +1,375 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Allo Router</title>
-  <meta name="description" content="Allo Router plans which AI plan should take which job before limits reset, then runs exactly the plan you reviewed. Nothing starts until you say so.">
-  <style>
-    :root {
-      color-scheme: light;
-      --ink: #1c1915;
-      --muted: #5e584e;
-      --paper: #f6f3ec;
-      --line: #e2dbd0;
-      --link: #0c3f52;
-      --code: #231f1b;
-      --code-ink: #f6f3ec;
-    }
-    * { box-sizing: border-box; }
-    html { background: var(--paper); }
-    body {
-      margin: 0;
-      color: var(--ink);
-      font: 1.0625rem/1.6 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
-    }
-    main {
-      max-width: 40rem;
-      margin: 0 auto;
-      padding: 4.5rem 1.25rem 5rem;
-    }
-    h1 {
-      margin: 0 0 0.85rem;
-      font-size: 2rem;
-      font-weight: 650;
-      letter-spacing: -0.03em;
-      line-height: 1.15;
-    }
-    h2 {
-      margin: 2.4rem 0 0.55rem;
-      font-size: 1.05rem;
-      font-weight: 650;
-    }
-    p { margin: 0.8rem 0; }
-    ul {
-      margin: 0.8rem 0;
-      padding-left: 1.2rem;
-    }
-    li { margin: 0.45rem 0; }
-    .lead {
-      font-size: 1.2rem;
-      line-height: 1.45;
-    }
-    a { color: var(--link); }
-    code, pre {
-      font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
-    }
-    p code, li code {
-      font-size: 0.92em;
-    }
-    pre {
-      margin: 1rem 0;
-      padding: 1rem 1.1rem;
-      overflow-x: auto;
-      color: var(--code-ink);
-      background: var(--code);
-      border-radius: 8px;
-      line-height: 1.5;
-    }
-    pre code { font-size: 0.86rem; }
-    .foot {
-      margin-top: 2.4rem;
-      padding-top: 1.1rem;
-      border-top: 1px solid var(--line);
-      color: var(--muted);
-    }
-  </style>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Allo Router: use every plan before it resets</title>
+<meta name="description" content="Allocate usage across your AI plans based on how much of each limit remains. Allo Router routes each job to the plan with the most left that may take it, and runs only the plan you reviewed.">
+<link rel="preload" href="fonts/archivo-latin-var.woff2" as="font" type="font/woff2" crossorigin>
+<style>
+  @font-face { font-family: "Archivo"; src: url(fonts/archivo-latin-var.woff2) format("woff2"); font-weight: 100 900; font-stretch: 62% 125%; font-display: swap; }
+  @font-face { font-family: "JetBrains Mono"; src: url(fonts/jetbrains-mono-latin-var.woff2) format("woff2"); font-weight: 100 800; font-display: swap; }
+  :root {
+    --paper: #E4E9E3;
+    --ink: #0E1D18;
+    --muted: #4F5E57;
+    --rule: #BCC6BE;
+    --codex: #2446D6;
+    --claude: #E39B0B;
+    --credit: #9A2C7C;
+    --none: #9AA59F;
+    --stop: #D3261A;
+    --reset-text: #B3200F;
+    --sans: "Archivo", "Arial Narrow", ui-sans-serif, system-ui, sans-serif;
+    --mono: "JetBrains Mono", ui-monospace, Menlo, monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--paper); color: var(--ink); }
+  body { font: 400 17px/1.55 var(--sans); font-variant-numeric: tabular-nums; }
+  a { color: inherit; text-underline-offset: 3px; }
+  a:focus-visible { outline: 3px solid var(--ink); outline-offset: 3px; }
+  code { font-family: var(--mono); font-size: 0.86em; }
+  .wrap { max-width: 1440px; margin: 0 auto; padding: 0 64px; }
+
+  nav { display: flex; align-items: baseline; flex-wrap: wrap; gap: 12px 34px; padding: 28px 0 0; }
+  .mark { font-variation-settings: "wdth" 125; font-stretch: 125%; font-weight: 800; font-size: 21px; letter-spacing: -0.01em; text-decoration: none; margin-right: auto; }
+  nav a:not(.mark) { text-decoration: none; font-size: 16px; color: var(--muted); }
+  nav a:not(.mark):hover { color: var(--ink); text-decoration: underline; }
+  nav .ver { font-size: 15px; color: var(--muted); }
+
+  /* hero */
+  .hero { display: grid; grid-template-columns: 470px minmax(0, 1fr); gap: 56px; padding: 46px 0 0; align-items: start; }
+  .hero > * { min-width: 0; }
+  h1 { margin: 0; font-variation-settings: "wdth" 62; font-stretch: 62%; font-weight: 820; font-size: 124px; line-height: 0.86; letter-spacing: -0.012em; }
+  .allocate { margin: 30px 0 0; font-size: 28px; line-height: 1.24; max-width: 17em; }
+  .allocate .word { font-variation-settings: "wdth" 125; font-stretch: 125%; letter-spacing: -0.01em; font-weight: 400; }
+  .allocate .word b { font-weight: 800; }
+  .lead { margin: 20px 0 0; font-size: 18px; line-height: 1.55; max-width: 30em; }
+  .actions { display: flex; align-items: center; flex-wrap: wrap; gap: 14px 28px; margin-top: 30px; }
+  .btn { display: inline-block; padding: 15px 24px; border-radius: 3px; background: var(--ink); color: var(--paper); font: 600 17px/1 var(--sans); text-decoration: none; }
+  .btn:hover { text-decoration: underline; text-underline-offset: 4px; }
+  .actions a.text { font-weight: 600; }
+  .install { margin: 22px 0 0; font: 400 14.5px/1.6 var(--mono); color: var(--muted); }
+  .install b { color: var(--ink); font-weight: 500; }
+
+  /* the schematic */
+  .yard > svg { display: block; width: 100%; height: auto; overflow: visible; }
+  .yard text { font-family: var(--sans); }
+  .yard > svg.yard-m { display: none; }
+  .t-name { font-size: 19px; font-weight: 700; fill: var(--ink); }
+  .t-num { font-size: 19px; font-weight: 600; fill: var(--ink); }
+  .t-reset { font-size: 16px; font-weight: 700; fill: var(--reset-text); }
+  .t-in { font-size: 14.5px; fill: var(--muted); }
+  .car rect { fill: var(--ink); }
+  .car text { fill: var(--paper); font-size: 12px; font-weight: 700; text-anchor: middle; }
+  .car-x rect { fill: var(--paper); stroke: var(--reset-text); stroke-width: 1.5; stroke-dasharray: 4 3; }
+  .car-x text { fill: var(--reset-text); font-size: 12px; font-weight: 700; text-anchor: middle; }
+  /* The car for #4 travels once from tasks.json onto the Codex line and stays there. Without motion it is drawn there. */
+  .mover { transform: translate(640px, 120px); }
+  @supports (offset-path: path("M0 0")) {
+    .mover { transform: none; offset-path: path("M0 280 H250 H262 Q270 280 276 274 L424 126 Q430 120 438 120 H640"); offset-rotate: 0deg; offset-distance: 100%; animation: travel 3.6s cubic-bezier(.55,.05,.35,1) .5s both; }
+  }
+  @keyframes travel { from { offset-distance: 0%; } to { offset-distance: 100%; } }
+  .docks { animation: dock .5s ease-out 3.9s both; }
+  @keyframes dock { from { opacity: 0; } to { opacity: 1; } }
+
+  .legend { display: flex; flex-wrap: wrap; gap: 6px 24px; margin: 4px 0 0 34px; font-size: 14px; color: var(--muted); }
+  .legend svg { vertical-align: middle; margin-right: 7px; }
+  .log { margin: 14px 0 0 34px; border-top: 1px solid var(--rule); padding-top: 14px; font: 400 13.5px/1.85 var(--mono); }
+  .log div { display: grid; grid-template-columns: 34px 300px 26px 112px minmax(0, 1fr); }
+  .log .why { color: var(--muted); }
+  .log .seg { align-self: center; height: 5px; width: 16px; }
+  .log .no { color: var(--reset-text); }
+  .caption { margin: 8px 0 0 34px; font-size: 14px; color: var(--muted); }
+
+  .rules { display: grid; grid-template-columns: repeat(3, 1fr); gap: 56px; margin-top: 40px; padding: 18px 0 30px; border-top: 1px solid var(--rule); font-size: 16px; }
+  .rules p { margin: 0; }
+
+  /* sections: heading on the left, content on the right, a hairline on top */
+  section.part { display: grid; grid-template-columns: 470px minmax(0, 1fr); gap: 56px; padding: 56px 0; border-top: 1px solid var(--rule); }
+  section.part > * { min-width: 0; }
+  h2 { margin: 0; font-variation-settings: "wdth" 62; font-stretch: 62%; font-weight: 800; font-size: 56px; line-height: 0.92; letter-spacing: -0.01em; }
+  .part .intro { margin: 18px 0 0; color: var(--muted); max-width: 26em; }
+  .part p { margin: 0 0 14px; max-width: 40em; }
+  .rows { margin: 0; }
+  .rows div { display: grid; grid-template-columns: 210px minmax(0, 1fr); gap: 24px; padding: 14px 0; border-top: 1px solid var(--rule); align-items: baseline; }
+  .rows div:first-child { border-top: 0; padding-top: 4px; }
+  .rows dt { font-weight: 700; }
+  .rows dd { margin: 0; }
+
+  .stations { margin: 4px 0 26px; }
+  .stations svg { display: block; width: 100%; max-width: 760px; height: auto; }
+  .stations text { font-family: var(--mono); font-size: 14px; fill: var(--ink); }
+  .stations .sub { font-family: var(--sans); font-size: 15px; fill: var(--muted); }
+  .stations-m { display: none; }
+  pre { margin: 0 0 18px; padding: 22px 26px; overflow-x: auto; color: var(--paper); background: var(--ink); border-radius: 3px; font: 400 14px/1.65 var(--mono); }
+  pre .c { color: #9FB0A7; }
+  pre.out { background: transparent; color: var(--ink); padding: 0 0 0 16px; border-left: 3px solid var(--ink); border-radius: 0; white-space: pre-wrap; }
+
+  .shot { margin: 0; }
+  .shot img { display: block; width: 100%; height: auto; border: 1px solid var(--rule); }
+  .shot figcaption { margin-top: 10px; font-size: 14px; color: var(--muted); }
+
+  footer { display: flex; flex-wrap: wrap; align-items: baseline; gap: 10px 28px; padding: 22px 0 40px; border-top: 1px solid var(--rule); font-size: 15px; color: var(--muted); }
+  footer .mark { font-size: 17px; color: var(--ink); margin-right: 0; }
+  footer span:nth-child(2) { margin-right: auto; }
+
+  @media (prefers-reduced-motion: reduce) {
+    .mover { animation: none; }
+    .docks { animation: none; }
+  }
+  @media (max-width: 1240px) {
+    .hero { grid-template-columns: minmax(0, 1fr); }
+    .hero .yard { max-width: 860px; }
+    h1 { font-size: 104px; }
+    section.part { grid-template-columns: minmax(0, 1fr); gap: 24px; }
+  }
+  @media (max-width: 900px) {
+    .rules { grid-template-columns: minmax(0, 1fr); gap: 12px; }
+  }
+  @media (max-width: 640px) {
+    .wrap { padding: 0 20px; }
+    nav { gap: 10px 20px; padding-top: 20px; }
+    nav .mark { width: 100%; }
+    .hero { padding-top: 30px; gap: 36px; }
+    h1 { font-size: 64px; line-height: 0.94; }
+    .allocate { font-size: 24px; }
+    .actions { flex-direction: column; align-items: stretch; }
+    .actions a { min-height: 44px; display: flex; align-items: center; justify-content: center; }
+    .yard > .yard-d { display: none; }
+    .yard > svg.yard-m { display: block; }
+    .legend, .log, .caption { margin-left: 0; }
+    .log div { grid-template-columns: 30px 24px minmax(0, 1fr); padding: 5px 0; line-height: 1.5; }
+    .log div > :nth-child(2) { grid-column: 2 / -1; }
+    .log div > :nth-child(3) { grid-column: 2; grid-row: 2; }
+    .log div > :nth-child(4) { grid-column: 3; grid-row: 2; }
+    .log div > :nth-child(5) { grid-column: 2 / -1; }
+    h2 { font-size: 44px; }
+    section.part { padding: 40px 0; }
+    .rows div { grid-template-columns: minmax(0, 1fr); gap: 4px; }
+    pre { padding: 18px; font-size: 13px; }
+    .stations svg { display: none; }
+    .stations-m { display: block; list-style: none; margin: 0; padding: 0 0 0 26px; border-left: 6px solid var(--ink); }
+    .stations-m li { position: relative; padding: 0 0 18px; }
+    .stations-m li:last-child { padding-bottom: 0; }
+    .stations-m li::before { content: ""; position: absolute; left: -41px; top: 2px; width: 14px; height: 14px; border: 4px solid var(--ink); border-radius: 50%; background: var(--paper); }
+    .stations-m code { display: block; font-size: 14px; }
+    .stations-m span { display: block; font-size: 15px; color: var(--muted); }
+  }
+</style>
 </head>
 <body>
-  <main>
-    <h1>Allo Router</h1>
-    <p class="lead">Allo Router plans which AI plan should take which job before limits reset. It can then run the jobs, but only the plan you reviewed, and only when you say so.</p>
-    <p>If you pay for more than one AI plan, each one has its own limit and its own reset. Capacity on one can expire while another has already run out. You list your plans, what is left, when each resets, and your jobs. Allo Router ranks the plans by how much is left against how soon each resets, and tells you where each job should go first: the plan closest to expiring that can still take it.</p>
-    <p>It reads two files you keep. One is your plans: what is left, when each resets, and which kinds of data each may touch. The other is your jobs. Readings come from <code>allo-router sync</code>, which reads what Claude Code and Codex already record on your computer, or you type them in. A reading older than 24 hours is flagged.</p>
-    <p>The planner never logs in, sends anything or makes a network request. Starting jobs is a separate step, <code>allo-router run</code>, which runs the CLI you set up for each plan, such as <code>claude -p</code> or <code>codex exec</code>. Allo Router stores no API keys; the CLI should already be logged in.</p>
+<div class="wrap">
+  <nav>
+    <a class="mark" href="#">Allo Router</a>
+    <a href="#how">How it decides</a>
+    <a href="#reviewed">Reviewed runs</a>
+    <a href="#dashboard">Dashboard</a>
+    <a href="#quickstart">Quickstart</a>
+    <a href="https://github.com/eudotong1/allo/blob/main/CHANGELOG.md">Changelog</a>
+    <a href="https://github.com/eudotong1/allo">GitHub</a>
+    <span class="ver">0.3.0</span>
+  </nav>
 
-    <h2>New in 0.3.0</h2>
-    <ul>
-      <li><strong>Readings without typing.</strong> <code>allo-router sync</code> reads how much of each plan is used, and when it resets, from files already on your computer: Claude Code's usage cache or the Claude Usage app's, and the rate limits Codex logs with every turn. It opens no network connection. Where a source has tokens but no limit, the reading is marked PARTIAL and your percentage is left alone; where there is nothing, UNAVAILABLE. Turn on <code>"auto"</code> and each plan starts from a fresh reading.</li>
-      <li><strong>What a job really used.</strong> Each job on a synced plan gets a usage reading just before and just after it. <code>allo-router report</code> shows the share of the plan limit it used, when that can be measured, next to the tokens the CLI reported, and says why when it cannot.</li>
-      <li><strong>A report on every run.</strong> <code>allo-router report</code> summarizes the run log by day or week as markdown or CSV: what ran where, what failed or misrouted, and an estimate of usage saved at API prices, labelled as an estimate and kept apart from the measured numbers.</li>
-      <li><strong>Recurring jobs.</strong> Mark a job <code>"recurring": "daily"</code> or <code>"weekly"</code> and it runs once per day or week instead of once ever.</li>
-    </ul>
+  <header class="hero">
+    <div>
+      <h1>Use every plan before it resets.</h1>
+      <p class="allocate"><span class="word"><b>Allo</b>cate</span> usage across your plans based on how much of each limit remains.</p>
+      <p class="lead">You get more done, and no plan runs out while another resets with plenty left on the table. Allo Router reads what is left on each plan from files already on your computer, sends each job to the plan with the most of its limit left that may take it, and runs only the plan you reviewed.</p>
+      <div class="actions">
+        <a class="btn" href="#quickstart">Read the quickstart</a>
+        <a class="text" href="https://github.com/eudotong1/allo">Source on GitHub</a>
+      </div>
+      <p class="install"><b>allo-router sync</b> then <b>allo-router run</b><br>Python 3.9 or newer, no dependencies.</p>
+    </div>
 
-    <h2>In 0.2.0</h2>
-    <ul>
-      <li><strong>An executor.</strong> <code>allo-router run</code> turns the plan into jobs and runs each through its plan's backend: <code>shell</code> (a command list, never passed through a shell), <code>dry-run</code>, or your own. It asks before each job, logs every run to <code>runs.jsonl</code> and keeps each job's output in <code>runs/</code>. It never edits your plans or jobs files.</li>
-      <li><strong>Preview by default.</strong> <code>allo-router run</code> on its own starts nothing. It shows every job, its plan and the exact command, and saves that as <code>plan.json</code>.</li>
-      <li><strong>Runs exactly the plan you reviewed.</strong> <code>allo-router run --plan plan.json --execute</code> runs only that saved plan. It refuses, and starts nothing, if the file was edited, is older than 60 minutes (the default), your readings or config changed, or any job would now come out differently. <code>--execute</code> without a saved plan is refused.</li>
-      <li><strong>Safe starter config.</strong> Every starter plan is on the <code>dry-run</code> backend, so a first <code>--execute</code> on a new install cannot start a real agent. The dry run shows the command it would run.</li>
-    </ul>
-    <p>Also new: <code>allo-router --version</code>, a guard against running a finished job twice, and API jobs that stay unassigned when the credit pool cannot take them, instead of falling back to a subscription. Full list in the <a href="https://github.com/eudotong1/allo/blob/main/CHANGELOG.md">changelog</a>.</p>
+    <div class="yard">
+      <svg class="yard-d" viewBox="0 0 860 500" role="img" aria-labelledby="yd-t yd-d">
+        <title id="yd-t">Example: six jobs routed across a Codex plan, a Claude plan and API credit</title>
+        <desc id="yd-d">Jobs come in from tasks.json and pass the allo-router junction. Codex has 79% of its limit left and resets in 28 hours; it takes jobs 3, 4 and 5. Claude, work has 62% left and resets in 85 hours; it takes the private job 6. API credit has $184.20 left and takes the API job 2. Job 7 needs more API credit than is left, so no plan takes it.</desc>
+        <!-- incoming track and branches -->
+        <g fill="none" stroke-width="10" stroke-linejoin="round">
+          <path d="M0 280 H250" stroke="var(--ink)"/>
+          <path d="M250 280 H262 Q270 280 276 274 L424 126 Q430 120 438 120" stroke="var(--codex)" stroke-width="12"/>
+          <path d="M250 280 H438" stroke="var(--claude)" stroke-width="12"/>
+          <path d="M250 280 H262 Q270 280 276 286 L424 434 Q430 440 438 440" stroke="var(--credit)" stroke-width="12"/>
+        </g>
+        <!-- each line runs to its reset: gray for the share of the limit used, the plan's colour for what is left -->
+        <g fill="none" stroke-width="16">
+          <path d="M438 120 H515" stroke="var(--rule)"/>
+          <path d="M515 120 H806" stroke="var(--codex)"/>
+          <path d="M438 280 H578" stroke="var(--rule)"/>
+          <path d="M578 280 H806" stroke="var(--claude)"/>
+          <path d="M438 440 H806" stroke="var(--credit)"/>
+        </g>
+        <g fill="var(--stop)">
+          <rect x="808" y="100" width="6" height="40"/><rect x="814" y="117" width="12" height="6"/>
+          <rect x="808" y="260" width="6" height="40"/><rect x="814" y="277" width="12" height="6"/>
+          <rect x="808" y="420" width="6" height="40"/><rect x="814" y="437" width="12" height="6"/>
+        </g>
+        <circle cx="250" cy="280" r="17" fill="var(--paper)" stroke="var(--ink)" stroke-width="5"/>
+        <text x="250" y="326" text-anchor="middle" class="t-in" style="fill:var(--ink);font-weight:700">allo-router</text>
+        <text x="0" y="314" class="t-in">tasks.json, 6 jobs</text>
+        <g class="car-x"><rect x="104" y="271" width="34" height="18"/><text x="121" y="284">#7</text></g>
 
-    <h2>Quickstart</h2>
-    <p>Needs Python 3.9 or newer. No dependencies. Install with <code>pip install .</code> from a checkout of the repository (not on PyPI yet), or run <code>python3 allo.py</code> directly.</p>
-    <pre><code>mkdir my-router &amp;&amp; cd my-router
-allo-router init                   # writes pools.json and tasks.json
-allo-router                        # prints the plan
-allo-router set chatgpt pct=55     # record a fresh reading by hand
-allo-router sync                   # or read it from local Claude Code / Codex files
-allo-router run                    # preview: the exact command each job would run; saves plan.json
-allo-router run --plan plan.json --execute   # runs exactly that plan, asking before each job
-allo-router report --period week   # what ran, what it used, and an estimate of what it saved</code></pre>
-    <p>Without installing, replace <code>allo-router</code> with <code>python3 /path/to/allo.py</code>. The starter files describe four example plans with made-up readings. Replace them with yours before trusting anything.</p>
-    <p>To let a plan start real jobs, check the command its dry run shows against the CLI you have installed, then change that plan's <code>"backend"</code> from <code>"dry-run"</code> to <code>"shell"</code> in <code>pools.json</code>. Do one plan at a time.</p>
-    <pre><code>"run": {"backend": "shell", "command": ["codex", "exec", "{prompt}"]}</code></pre>
+        <text x="438" y="90" class="t-name">Codex<tspan class="t-num" dx="12">79% left</tspan></text>
+        <text x="806" y="90" text-anchor="end" class="t-reset">resets in 28h</text>
+        <g class="car"><rect x="676" y="111" width="34" height="18"/><text x="693" y="124">#3</text></g>
+        <g class="car"><rect x="724" y="111" width="34" height="18"/><text x="741" y="124">#5</text></g>
 
-    <h2>More</h2>
-    <ul>
-      <li><a href="https://github.com/eudotong1/allo/blob/main/docs/architecture.md">Architecture</a>: how the planner, sync, executor and report fit together, and how to write a backend.</li>
-      <li><a href="https://github.com/eudotong1/allo/blob/main/docs/roadmap.md">Roadmap</a>: what is next.</li>
-      <li><a href="https://github.com/eudotong1/allo/blob/main/CHANGELOG.md">Changelog</a>: what changed in each version.</li>
-    </ul>
+        <text x="438" y="250" class="t-name">Claude, work<tspan class="t-num" dx="12">62% left</tspan></text>
+        <text x="806" y="250" text-anchor="end" class="t-reset">resets in 85h</text>
+        <g class="car"><rect x="740" y="271" width="34" height="18"/><text x="757" y="284">#6</text></g>
 
-    <p class="foot">Allo Router 0.3.0. Free and MIT licensed. Source: <a href="https://github.com/eudotong1/allo">github.com/eudotong1/allo</a>.</p>
-  </main>
+        <text x="438" y="410" class="t-name">API credit<tspan class="t-num" dx="12">$184.20 left</tspan></text>
+        <text x="806" y="410" text-anchor="end" class="t-reset">resets 11/01</text>
+        <g class="car"><rect x="740" y="431" width="34" height="18"/><text x="757" y="444">#2</text></g>
+
+        <g class="car mover"><rect x="-17" y="-9" width="34" height="18" style="fill:var(--codex)"/><text x="0" y="4">#4</text></g>
+      </svg>
+
+      <svg class="yard-m" viewBox="0 0 350 420" role="img" aria-labelledby="ym-t">
+        <title id="ym-t">Example: Codex, 79% left, resets in 28 hours, takes jobs 3, 4 and 5. Claude, work, 62% left, resets in 85 hours, takes private job 6. API credit, $184.20 left, takes API job 2. Job 7 fits no plan.</title>
+        <path d="M0 34 H40" stroke="var(--ink)" stroke-width="8"/>
+        <path d="M52 44 V330" stroke="var(--ink)" stroke-width="4"/>
+        <g class="car-x"><rect x="4" y="25" width="30" height="18"/><text x="19" y="38">#7</text></g>
+        <circle cx="52" cy="34" r="11" fill="var(--paper)" stroke="var(--ink)" stroke-width="4"/>
+        <text x="72" y="39" class="t-in" style="fill:var(--ink);font-weight:700">allo-router</text>
+        <text x="168" y="39" class="t-in">tasks.json, 6 jobs</text>
+        <g fill="none" stroke-width="12">
+          <path d="M52 130 H110" stroke="var(--rule)"/><path d="M110 130 H326" stroke="var(--codex)"/>
+          <path d="M52 230 H156" stroke="var(--rule)"/><path d="M156 230 H326" stroke="var(--claude)"/>
+          <path d="M52 330 H326" stroke="var(--credit)"/>
+        </g>
+        <g fill="var(--stop)">
+          <rect x="328" y="114" width="5" height="32"/><rect x="333" y="127" width="10" height="5"/>
+          <rect x="328" y="214" width="5" height="32"/><rect x="333" y="227" width="10" height="5"/>
+          <rect x="328" y="314" width="5" height="32"/><rect x="333" y="327" width="10" height="5"/>
+        </g>
+        <text x="64" y="108" style="font-size:17px;font-weight:700">Codex</text><text x="326" y="108" text-anchor="end" style="font-size:17px;font-weight:600">79% left</text>
+        <text x="326" y="162" text-anchor="end" style="font-size:14px;font-weight:700;fill:var(--reset-text)">resets in 28h</text>
+        <g class="car"><rect x="200" y="121" width="30" height="18" style="fill:var(--codex)"/><text x="215" y="134">#4</text></g>
+        <g class="car"><rect x="236" y="121" width="30" height="18"/><text x="251" y="134">#3</text></g>
+        <g class="car"><rect x="272" y="121" width="30" height="18"/><text x="287" y="134">#5</text></g>
+        <text x="64" y="208" style="font-size:17px;font-weight:700">Claude, work</text><text x="326" y="208" text-anchor="end" style="font-size:17px;font-weight:600">62% left</text>
+        <text x="326" y="262" text-anchor="end" style="font-size:14px;font-weight:700;fill:var(--reset-text)">resets in 85h</text>
+        <g class="car"><rect x="272" y="221" width="30" height="18"/><text x="287" y="234">#6</text></g>
+        <text x="64" y="308" style="font-size:17px;font-weight:700">API credit</text><text x="326" y="308" text-anchor="end" style="font-size:17px;font-weight:600">$184.20 left</text>
+        <text x="326" y="362" text-anchor="end" style="font-size:14px;font-weight:700;fill:var(--reset-text)">resets 11/01</text>
+        <g class="car"><rect x="272" y="321" width="30" height="18"/><text x="287" y="334">#2</text></g>
+        <text x="0" y="404" class="t-in">Gray: share of the limit used. Colour: what is left.</text>
+      </svg>
+
+      <div class="legend yard-d" aria-hidden="true">
+        <span><svg width="28" height="10"><rect width="28" height="10" fill="var(--rule)"/></svg>Used</span>
+        <span><svg width="28" height="10"><rect width="28" height="10" fill="var(--codex)"/></svg>Left before reset</span>
+        <span><svg width="16" height="22"><rect x="2" width="5" height="22" fill="var(--stop)"/><rect x="2" y="8" width="12" height="5" fill="var(--stop)"/></svg>Reset</span>
+        <span><svg width="34" height="18"><rect x="1" y="1" width="32" height="16" fill="var(--paper)" stroke="var(--reset-text)" stroke-width="1.5" stroke-dasharray="4 3"/></svg>No plan fits</span>
+      </div>
+
+      <div class="log" role="table" aria-label="What the planner printed for these jobs">
+        <div role="row"><span>#2</span><span>Classify 2,000 support tickets</span><span class="seg" style="background:var(--credit)"></span><span>api_credit</span><span class="why">needs the API, fits the credit</span></div>
+        <div role="row"><span>#3</span><span>Refactor the pricing page</span><span class="seg" style="background:var(--codex)"></span><span>codex</span><span class="why">79% left, the most</span></div>
+        <div role="row" class="docks"><span>#4</span><span>Fix flaky test in test_exec.py</span><span class="seg" style="background:var(--codex)"></span><span>codex</span><span class="why">79% left, the most</span></div>
+        <div role="row"><span>#5</span><span>Write tests for allo_sync.py</span><span class="seg" style="background:var(--codex)"></span><span>codex</span><span class="why">79% left, the most</span></div>
+        <div role="row"><span>#6</span><span>Summarize customer interview notes</span><span class="seg" style="background:var(--claude)"></span><span>claude_work</span><span class="why">private data, 62% left</span></div>
+        <div role="row"><span>#7</span><span>Review contract redlines</span><span class="seg" style="background:var(--none)"></span><span class="no">UNASSIGNED</span><span class="why">$500 API job, $160 credit left</span></div>
+      </div>
+      <p class="caption">Example plans and readings, routed by the real planner. Yours come from <code>allo-router sync</code> or <code>set</code>.</p>
+    </div>
+  </header>
+
+  <div class="rules">
+    <p><strong>Reads, never logs in.</strong> Usage comes from files Claude Code and Codex already keep on your computer.</p>
+    <p><strong>Runs only what you reviewed.</strong> If a reading, job or command changed since the preview, it refuses and starts nothing.</p>
+    <p><strong>Keeps your keys out.</strong> Stores no API keys. Free and MIT licensed.</p>
+  </div>
+
+  <section class="part" id="how">
+    <div>
+      <h2>How it decides</h2>
+      <p class="intro">You keep two files: your plans, with what is left and when each resets, and your jobs. The planner reads them and prints a proposal. It never sends anything.</p>
+    </div>
+    <dl class="rows">
+      <div><dt>Most left wins</dt><dd>A job goes to the subscription with the most of its limit left, as long as at least 20% remains. You can change that floor.</dd></div>
+      <div><dt>API jobs stay on credit</dt><dd>A job that needs the API runs on API credit while the dollars fit above a 10% reserve. It never falls back to a subscription. If it does not fit, it waits.</dd></div>
+      <div><dt>Data stays in its tier</dt><dd>Each plan lists the kinds of data it may touch. A private job never goes to a plan cleared only for public work.</dd></div>
+      <div><dt>Unknown is not guessed</dt><dd>A plan with no reading, or a reading older than 24 hours, is flagged. Nothing runs on it until you sync or type in a fresh one.</dd></div>
+      <div><dt>Readings stay local</dt><dd><code>allo-router sync</code> reads the usage Claude Code and Codex already record on your computer. It opens no network connection, and where a file has no limit in it, it says so.</dd></div>
+    </dl>
+  </section>
+
+  <section class="part" id="reviewed">
+    <div>
+      <h2>Runs only what you reviewed</h2>
+      <p class="intro">Planning and running are separate steps, and the second one only accepts what you saw in the first.</p>
+    </div>
+    <div>
+      <div class="stations">
+        <svg viewBox="0 0 760 92" role="img" aria-labelledby="st-t">
+          <title id="st-t">Preview with allo-router run, which saves plan.json; then execute exactly that plan.</title>
+          <path d="M16 30 H744" stroke="var(--ink)" stroke-width="10"/>
+          <g fill="var(--paper)" stroke="var(--ink)" stroke-width="5">
+            <circle cx="16" cy="30" r="12"/><circle cx="380" cy="30" r="12"/><circle cx="744" cy="30" r="12"/>
+          </g>
+          <text x="0" y="70">allo-router run</text>
+          <text x="380" y="70" text-anchor="middle">plan.json</text>
+          <text x="760" y="70" text-anchor="end">run --plan plan.json --execute</text>
+          <text x="0" y="90" class="sub">Every job, plan and command</text>
+          <text x="380" y="90" text-anchor="middle" class="sub">Saved and hashed</text>
+          <text x="760" y="90" text-anchor="end" class="sub">Asks before each job</text>
+        </svg>
+        <ol class="stations-m">
+          <li><code>allo-router run</code><span>Every job, plan and command</span></li>
+          <li><code>plan.json</code><span>Saved and hashed</span></li>
+          <li><code>run --plan plan.json --execute</code><span>Asks before each job</span></li>
+        </ol>
+      </div>
+      <p>The saved plan records the readings it was made on and a hash of your plans, jobs and commands. If the file was edited, is older than an hour, or any reading, job or command changed since, the run refuses before starting anything:</p>
+      <pre class="out">refusing to run plan plan.json: readings in pools.json changed since it was saved; preview again to plan on the new ones</pre>
+      <p>Each job's output goes to <code>runs/</code> and a line to <code>runs.jsonl</code>. <code>allo-router report</code> turns that log into what ran where, what failed, the share of each plan's limit it used, and an estimate of what it saved, labelled as an estimate.</p>
+      <p>Coming in the next release: for a run you schedule overnight, <code>allo-router run --refresh plan.json</code> re-checks the plan you reviewed in the evening against fresh readings just before it runs. It saves it again only if every job still comes out exactly as reviewed, so nothing new gets through.</p>
+    </div>
+  </section>
+
+  <section class="part" id="dashboard">
+    <div>
+      <h2>See what it is doing</h2>
+      <p class="intro">Coming in the next release: <code>allo-router dashboard</code> serves a read-only page on your own computer. It shows which job is running and where, what each plan has left, what runs next and whether the overnight run will accept its plan.</p>
+    </div>
+    <figure class="shot">
+      <img src="dashboard.png" width="1440" height="790" alt="The Allo Router dashboard with example data: running job 14 on Codex, the next run at 03:00, and each plan's line running to its reset with queued jobs on it.">
+      <figcaption>Example data. The page listens on 127.0.0.1 only, never syncs and never starts a job.</figcaption>
+    </figure>
+  </section>
+
+  <section class="part" id="quickstart">
+    <div>
+      <h2>Quickstart</h2>
+      <p class="intro">Needs Python 3.9 or newer and nothing else. Install with <code>pip install .</code> from a checkout (not on PyPI yet), or run <code>python3 allo.py</code> directly.</p>
+    </div>
+    <div>
+<pre><code>mkdir my-router &amp;&amp; cd my-router
+allo-router init                   <span class="c"># writes pools.json and tasks.json</span>
+allo-router                        <span class="c"># prints the plan</span>
+allo-router sync                   <span class="c"># reads usage from local Claude Code / Codex files</span>
+allo-router set chatgpt pct=55     <span class="c"># or record a reading by hand</span>
+allo-router run                    <span class="c"># preview the exact commands; saves plan.json</span>
+allo-router run --plan plan.json --execute   <span class="c"># runs exactly that plan</span>
+allo-router report --period week   <span class="c"># what ran, what it used, what it saved (estimated)</span></code></pre>
+      <p>The starter files describe four example plans with made-up readings, and every plan starts on the <code>dry-run</code> backend, so a first <code>--execute</code> starts nothing real. To let a plan start jobs, check the command its dry run shows, then change its <code>"backend"</code> from <code>"dry-run"</code> to <code>"shell"</code> in <code>pools.json</code>. One plan at a time.</p>
+      <p>Allo Router does not check whether a provider's terms allow a given use of your plan. That is yours to read.</p>
+    </div>
+  </section>
+
+  <footer>
+    <span class="mark">Allo Router</span>
+    <span>0.3.0. Free and MIT licensed.</span>
+    <a href="https://github.com/eudotong1/allo">GitHub</a>
+    <a href="https://github.com/eudotong1/allo/blob/main/CHANGELOG.md">Changelog</a>
+    <a href="https://github.com/eudotong1/allo/blob/main/docs/architecture.md">Architecture</a>
+    <a href="https://github.com/eudotong1/allo/blob/main/docs/roadmap.md">Roadmap</a>
+  </footer>
+</div>
 </body>
 </html>
