@@ -289,6 +289,19 @@ def test_dry_run_backend_never_starts_anything_even_under_execute(tmp_path, no_s
     assert "already ran" not in run(tmp_path, "--execute", "--yes")[1]   # a dry run is not a finished job
 
 
+def test_dry_run_backend_shows_the_command_it_would_run_and_still_starts_nothing(tmp_path, no_subprocess):
+    write_cfg(tmp_path, {"backend": "dry-run", "command": ECHO_ARG})
+    code, out = run(tmp_path, "--execute", "--yes")
+    assert code == 0 and 'With "backend": "shell" it would run:' in out and "hello" in out
+    assert log(tmp_path)[0]["status"] == "dry-run" and not (tmp_path / "runs").exists()
+
+
+def test_dry_run_backend_checks_the_command_it_shows(tmp_path, no_subprocess):
+    write_cfg(tmp_path, {"backend": "dry-run", "command": "claude -p {prompt}"})
+    code, out = run(tmp_path, "--execute", "--yes")
+    assert "bad run block on sub" in out and "list of strings" in out and not log(tmp_path)
+
+
 def test_registered_backend_is_used_and_a_crash_does_not_stop_the_rest(tmp_path, monkeypatch):
     monkeypatch.setattr(allo_exec, "BACKENDS", dict(allo_exec.BACKENDS))
     seen = []
@@ -331,8 +344,20 @@ def test_starter_config_dry_run_routes_each_job(tmp_path, no_subprocess):
         (tmp_path / n).write_text((ROOT / "examples" / n).read_text())
     code, out = run(tmp_path)
     assert code == 0
-    assert "codex exec 'Refactor the pricing page" in out
-    assert out.count("dry-run backend") == 2 and "unassigned" in out
+    assert "would run: codex exec 'Refactor the pricing page" in out
+    assert out.count("dry-run backend") == 3 and "unassigned" in out
+
+
+def test_every_starter_pool_is_on_the_dry_run_backend(tmp_path):
+    # A new install must not be able to start a real agent on its first --execute. Checked on the config
+    # itself: tests never run --execute against the starter files.
+    import allo
+    assert all(p["run"]["backend"] == "dry-run" for p in allo.STARTER_POOLS["pools"])
+    assert all(isinstance(allo_exec.make_backend(p["run"]), allo_exec.DryRunBackend)
+               for p in allo.STARTER_POOLS["pools"])
+    allo.cmd_init(tmp_path)
+    written = json.loads((tmp_path / "pools.json").read_text())["pools"]
+    assert [p["run"]["backend"] for p in written] == ["dry-run"] * len(allo.STARTER_POOLS["pools"])
 
 
 def test_cli_run_subcommand_dry_run_then_execute(tmp_path):

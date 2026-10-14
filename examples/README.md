@@ -10,14 +10,16 @@ Try them without touching your own files:
 
 In the starter config:
 
-| pool | run block | what `run --execute` does |
-|------|-----------|---------------------------|
-| `claude_work` | `shell`: `claude -p {prompt}` | runs Claude Code non-interactively |
-| `chatgpt` | `shell`: `codex exec {prompt}` | runs the Codex CLI non-interactively |
-| `api_credit` | `dry-run` | logs the job, starts nothing |
-| `claude_personal` | none | never runs; start those jobs yourself |
+Every starter pool is on the `dry-run` backend, so `run --execute` logs each job and starts nothing:
 
-Check those commands against the CLI versions you have before running with `--execute`. Running `--execute` against `--dir examples` writes `runs.jsonl` and `runs/` into this folder; both are gitignored.
+| pool | run block | command shown in the dry run |
+|------|-----------|------------------------------|
+| `claude_work` | `dry-run` | `claude -p {prompt}` |
+| `claude_personal` | `dry-run` | `claude -p {prompt}` |
+| `chatgpt` | `dry-run` | `codex exec {prompt}` |
+| `api_credit` | `dry-run` | none |
+
+To make a pool run for real, copy the starter files to your own folder (or use `allo-router init`), check the shown command against the CLI you have, and change that pool's `"backend"` to `"shell"`. Do not opt in pools in this folder; it is the reference copy. If two pools use the same CLI under different logins, give each an `env` that points the CLI at its own config folder (see your CLI's docs for the variable).
 
 To try the custom backend, copy the starter files somewhere, change a pool's run block to `{"backend": "outbox", "folder": "outbox"}`, then:
 

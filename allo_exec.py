@@ -41,13 +41,22 @@ class BackendError(Exception):
 
 
 class DryRunBackend:
-    """Starts nothing, even under --execute. For a pool you want planned and logged but not run yet."""
+    """Starts nothing, even under --execute. For a pool you want planned and logged but not run yet.
+
+    run block: {"backend": "dry-run"}, optionally with the shell backend's "command", "env", "cwd" and "timeout_s".
+    Those are only checked and shown, so once the dry run prints the command you want, changing "backend" to
+    "shell" is the whole opt-in. The starter config puts every pool on this backend.
+    """
 
     def __init__(self, cfg):
         self.cfg = cfg
+        self.would = ShellBackend(cfg) if "command" in cfg else None
 
     def describe(self, job):
-        return "dry-run backend: nothing starts, even with --execute"
+        if self.would is None:
+            return "dry-run backend: nothing starts, even with --execute"
+        return ('dry-run backend: nothing starts, even with --execute. With "backend": "shell" it would run: '
+                + self.would.describe(job))
 
     def run(self, job):
         return {"status": "dry-run", "returncode": None, "stdout": "", "stderr": ""}

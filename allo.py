@@ -18,7 +18,9 @@ from pathlib import Path
 
 STALE_H = 24
 
-# Starter files written by `allo init`. Kept in code so a pip install works without extra data files.
+# Starter files written by `allo-router init`. Kept in code so a pip install works without extra data files.
+# Every starter pool uses the dry-run backend, so a first `run --execute` cannot start a real agent.
+# The command each pool would run is shown in the dry run; switch "backend" to "shell" to opt in.
 STARTER_POOLS = {
   "tiers": [
     "public",
@@ -42,7 +44,7 @@ STARTER_POOLS = {
       "resets_at": "2099-01-04T15:00:00Z",
       "updated_at": "2099-01-03T09:00:00Z",
       "run": {
-        "backend": "shell",
+        "backend": "dry-run",
         "command": [
           "claude",
           "-p",
@@ -59,7 +61,15 @@ STARTER_POOLS = {
       ],
       "remaining_pct": None,
       "resets_at": "2099-01-08T09:00:00Z",
-      "updated_at": None
+      "updated_at": None,
+      "run": {
+        "backend": "dry-run",
+        "command": [
+          "claude",
+          "-p",
+          "{prompt}"
+        ]
+      }
     },
     {
       "id": "chatgpt",
@@ -72,7 +82,7 @@ STARTER_POOLS = {
       "resets_at": "2099-01-06T06:00:00Z",
       "updated_at": "2099-01-03T09:00:00Z",
       "run": {
-        "backend": "shell",
+        "backend": "dry-run",
         "command": [
           "codex",
           "exec",
