@@ -6,7 +6,7 @@
 Try them without touching your own files:
 
     python3 allo.py --dir examples              # the plan
-    python3 allo.py --dir examples run          # what would run, and how
+    python3 allo.py --dir examples run          # what would run, and how (also saves examples/plan.json, gitignored)
 
 In the starter config:
 
@@ -23,5 +23,5 @@ To make a pool run for real, copy the starter files to your own folder (or use `
 
 To try the custom backend, copy the starter files somewhere, change a pool's run block to `{"backend": "outbox", "folder": "outbox"}`, then:
 
-    python3 examples/custom_backend.py <that-folder>                    # dry run
-    python3 examples/custom_backend.py <that-folder> --execute --yes    # writes outbox/*.md
+    python3 examples/custom_backend.py <that-folder>                                           # preview, saves plan.json
+    python3 examples/custom_backend.py <that-folder> --plan <that-folder>/plan.json --execute --yes   # writes outbox/*.md

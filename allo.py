@@ -16,6 +16,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
+__version__ = "0.1.0"
 STALE_H = 24
 
 # Starter files written by `allo-router init`. Kept in code so a pip install works without extra data files.

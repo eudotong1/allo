@@ -1,21 +1,27 @@
 #!/usr/bin/env python3
-"""Allo Router executor: runs the jobs in a plan through a pluggable backend.
+"""Allo Router executor: runs exactly the plan you reviewed, through a pluggable backend.
 
-Dry run by default: it prints the exact command each job would run and starts nothing.
-With --execute it asks before each job (or takes --yes), runs it, and records the result in runs.jsonl
-with the job's output under runs/. It never edits pools.json or tasks.json: readings stay yours to record
-with `allo-router set`, because a finished job does not tell you how much of a plan it used.
+`run` on its own is a preview: it prints the exact command each job would run, starts nothing, and saves that
+plan to plan.json with its hash, the time it was made and a fingerprint of the readings it used.
+`run --plan plan.json --execute` runs that saved plan and nothing else. It refuses, before starting anything,
+if the file was edited, is older than --max-plan-age, or the config, readings or any job's command no longer
+match. It asks before each job (or takes --yes), runs it, and records the result in runs.jsonl with the job's
+output under runs/. It never edits pools.json or tasks.json: readings stay yours to record with
+`allo-router set`, because a finished job does not tell you how much of a plan it used.
 
-Each pool opts in to execution with a "run" block in pools.json. A pool without one is never run.
+Each pool opts in to execution with a "run" block in pools.json. A pool without one is never run, and the
+starter config puts every pool on the dry-run backend until you switch it to "shell".
 
-  allo-router run                          show what would run (dry run)
-  allo-router run --execute                run each job after you confirm it
-  allo-router run --execute --yes          run without asking (needed when there is no terminal)
-  allo-router run --only 1,3               limit to these task ids
-  allo-router run --allow-unverified       also run on pools flagged STALE / NO READING / RESET PASSED
-  allo-router run --rerun                  run jobs that already finished ok in runs.jsonl
+  allo-router run                               preview, and save the plan to plan.json
+  allo-router run --plan plan.json --execute    run that plan, asking before each job
+  allo-router run --plan plan.json --execute --yes   without asking (needed when there is no terminal)
+  allo-router run --plan plan.json              check a saved plan still matches, start nothing
+  allo-router run --only 1,3                    preview only these task ids
+  allo-router run --allow-unverified            also plan on pools flagged STALE / NO READING / RESET PASSED
+  allo-router run --rerun                       also plan jobs that already finished ok in runs.jsonl
 """
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -169,8 +175,9 @@ def make_backend(run_cfg):
     return BACKENDS[name](run_cfg)
 
 
-def previous_ok(here):
-    """(task id, task name) -> time of its last ok run, from runs.jsonl."""
+def previous_ok(here, plan=None):
+    """(task id, task name) -> time of its last ok run, from runs.jsonl. With `plan`, only runs of that plan.
+    The key leaves out the prompt on purpose: editing a finished job's prompt does not make it run again."""
     done, log = {}, here / RUN_LOG
     if log.exists():
         for line in log.read_text().splitlines():
@@ -178,7 +185,7 @@ def previous_ok(here):
                 e = json.loads(line)
             except ValueError:
                 continue
-            if e.get("status") == "ok":
+            if e.get("status") == "ok" and (plan is None or e.get("plan") == plan):
                 done[(str(e.get("task_id")), e.get("task_name"))] = e.get("at")
     return done
 
@@ -217,6 +224,106 @@ def select(cfg, tasks, here, now, only=None, allow_unverified=False, rerun=False
     return jobs
 
 
+# Saved plans. A preview saves the plan it printed; `run --plan FILE --execute` runs exactly that plan or nothing.
+
+PLAN_FILE = "plan.json"
+PLAN_FORMAT = "allo-router-plan/1"
+PLAN_KEYS = ("format", "created_at", "config_dir", "options", "config_hash", "readings_fingerprint", "jobs", "hash")
+DEFAULT_PLAN_AGE_MIN = 60
+FUTURE_SKEW_S = 300
+# Pool fields `allo-router set` writes. If any changed, the plan was made on other readings.
+READING_KEYS = ("remaining_pct", "remaining_usd", "resets_at", "updated_at", "source")
+
+
+class PlanError(Exception):
+    """A saved plan cannot run as it is. Nothing starts; the message says why."""
+
+
+def digest(data):
+    return "sha256:" + hashlib.sha256(json.dumps(data, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+
+
+def fingerprints(cfg, tasks):
+    """(config hash, readings fingerprint). Readings are what `set` changes; config is everything else."""
+    readings = {p["id"]: {k: p.get(k) for k in READING_KEYS} for p in cfg["pools"]}
+    pools = [{k: v for k, v in p.items() if k not in READING_KEYS} for p in cfg["pools"]]
+    return digest({"config": dict(cfg, pools=pools), "tasks": tasks}), digest(readings)
+
+
+def job_record(job):
+    """What a reviewed job promises: which pool, which prompt, which folder, which command."""
+    t = job["task"]
+    return {"task_id": str(t["id"]), "task_name": t["name"], "pool": job["pool"], "prompt": job["prompt"],
+            "cwd": job["cwd"], "command": job["backend"].describe(job) if job["backend"] else None,
+            "skip": job["skip"]}
+
+
+def save_plan(path, here, cfg, tasks, jobs, now, options):
+    """Write the previewed plan to `path` and return its hash."""
+    config_hash, readings = fingerprints(cfg, tasks)
+    plan = {"format": PLAN_FORMAT, "allo_router": allo.__version__, "created_at": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "config_dir": str(here.resolve()), "options": options, "config_hash": config_hash,
+            "readings_fingerprint": readings, "jobs": [job_record(j) for j in jobs]}
+    plan["hash"] = digest(plan)
+    Path(path).write_text(json.dumps(plan, indent=2) + "\n")
+    return plan["hash"]
+
+
+def load_plan(path):
+    try:
+        plan = json.loads(Path(path).read_text())
+    except (OSError, ValueError) as e:
+        raise PlanError(f"cannot read it: {e}")
+    if not isinstance(plan, dict) or plan.get("format") != PLAN_FORMAT or not all(k in plan for k in PLAN_KEYS):
+        raise PlanError(f"not an Allo Router plan file ({PLAN_FORMAT})")
+    if plan["hash"] != digest({k: v for k, v in plan.items() if k != "hash"}):
+        raise PlanError("it was changed after it was saved (hash does not match); preview again to save a new one")
+    return plan
+
+
+def jobs_from_plan(plan, here, cfg, tasks, now, max_age_min):
+    """The saved plan's jobs, checked against the clock, config, readings and run log as they are now.
+    Raises PlanError if anything that was reviewed would come out differently."""
+    age = (now - allo.parse(plan["created_at"])).total_seconds()
+    if age < -FUTURE_SKEW_S:
+        raise PlanError(f"it was saved at {plan['created_at']}, which is in the future; check the clock")
+    if age > max_age_min * 60:
+        raise PlanError(f"it is stale: saved {age / 60:.0f} minutes ago, limit {max_age_min:g} (--max-plan-age); "
+                        "preview again")
+    if plan["config_dir"] != str(here.resolve()):
+        raise PlanError(f"it was saved for {plan['config_dir']}, not {here.resolve()}")
+    config_hash, readings = fingerprints(cfg, tasks)
+    if plan["readings_fingerprint"] != readings:
+        raise PlanError("readings in pools.json changed since it was saved; preview again to plan on the new ones")
+    if plan["config_hash"] != config_hash:
+        raise PlanError("pools.json or tasks.json changed since it was saved; preview again")
+    o = plan["options"]
+    current = {str(j["task"]["id"]): j for j in
+               select(cfg, tasks, here, now, set(o["only"]) if o["only"] else None, o["allow_unverified"], o["rerun"])}
+    done, done_in_plan = previous_ok(here), previous_ok(here, plan["hash"])
+    jobs = []
+    for saved in plan["jobs"]:
+        job = current.get(saved["task_id"])
+        if job is None:
+            raise PlanError(f"task #{saved['task_id']} is in it but no longer planned")
+        key = (saved["task_id"], saved["task_name"])
+        job["plan"] = plan["hash"]
+        if saved["skip"]:
+            job["skip"], job["backend"] = saved["skip"], None   # not reviewed as runnable, so it never runs
+        elif key in done_in_plan:
+            job["skip"], job["backend"] = f"already ran ok under this plan at {done_in_plan[key]}", None
+        elif key in done and not o["rerun"]:
+            job["skip"], job["backend"] = f"already ran ok at {done[key]}, after this plan was saved", None
+        elif job["skip"]:
+            raise PlanError(f"#{saved['task_id']} would now be skipped: {job['skip']}")
+        else:
+            changed = [k for k, v in job_record(job).items() if saved.get(k) != v]
+            if changed:
+                raise PlanError(f"#{saved['task_id']} no longer matches it ({', '.join(changed)} changed)")
+        jobs.append(job)
+    return jobs
+
+
 def _stamp():
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
@@ -233,7 +340,8 @@ def record(here, job, res, started, secs):
                        f"## stdout\n{res['stdout']}\n## stderr\n{res['stderr']}\n")
     entry = {"at": started, "task_id": t["id"], "task_name": t["name"], "pool": job["pool"],
              "backend": type(job["backend"]).__name__, "status": res["status"], "returncode": res["returncode"],
-             "seconds": round(secs, 1), "output": str(out.relative_to(here)) if out else None}
+             "seconds": round(secs, 1), "output": str(out.relative_to(here)) if out else None,
+             "plan": job.get("plan")}
     with open(here / RUN_LOG, "a") as f:
         f.write(json.dumps(entry) + "\n")
     return out
@@ -279,11 +387,18 @@ def ask(job):
 
 def cmd_run(here, argv, now, confirm=ask, out=print, interactive=None):
     """`allo-router run`. Returns the process exit code: 0 fine, 1 a job failed, 2 refused to start."""
-    ap = argparse.ArgumentParser(prog="allo-router run", description="Run the plan's jobs. Dry run unless --execute.")
+    ap = argparse.ArgumentParser(prog="allo-router run", description="Preview the plan's jobs and save the plan "
+                                 "(default), or run a saved plan with --plan FILE --execute.")
     mode = ap.add_mutually_exclusive_group()
     mode.add_argument("--dry-run", action="store_true", help="print what would run and start nothing (default)")
-    mode.add_argument("--execute", action="store_true", help="actually start the jobs")
+    mode.add_argument("--execute", action="store_true", help="actually start the jobs of the --plan file")
     ap.add_argument("--yes", action="store_true", help="with --execute, do not ask before each job")
+    ap.add_argument("--plan", metavar="FILE", help="use this saved plan instead of planning again; "
+                    "required with --execute")
+    ap.add_argument("--save-plan", metavar="FILE",
+                    help=f"where a preview saves its plan (default: {PLAN_FILE} in the config folder)")
+    ap.add_argument("--max-plan-age", type=float, default=DEFAULT_PLAN_AGE_MIN, metavar="MINUTES",
+                    help=f"refuse a saved plan older than this (default {DEFAULT_PLAN_AGE_MIN})")
     ap.add_argument("--only", help="comma-separated task ids to consider")
     ap.add_argument("--allow-unverified", action="store_true",
                     help="also run on pools flagged STALE, NO READING, NO RESET TIME or RESET PASSED")
@@ -291,24 +406,53 @@ def cmd_run(here, argv, now, confirm=ask, out=print, interactive=None):
     a = ap.parse_args(argv)
     if a.yes and not a.execute:
         ap.error("--yes only makes sense with --execute")
+    if a.plan and (a.only or a.allow_unverified or a.rerun):
+        ap.error("--only, --allow-unverified and --rerun shape the plan: pass them when previewing, not with --plan")
+    if a.plan and a.save_plan:
+        ap.error("--save-plan is for a preview; --plan uses a plan that is already saved")
+    if a.max_plan_age <= 0:
+        ap.error("--max-plan-age must be a positive number of minutes")
+    if a.execute and not a.plan:
+        out(f"refusing to execute: --execute runs a reviewed plan. Preview with `allo-router run`, which saves "
+            f"{PLAN_FILE}, then run `allo-router run --plan {PLAN_FILE} --execute`.")
+        return 2
     if interactive is None:
         interactive = sys.stdin.isatty()
     if a.execute and not a.yes and not interactive:
         out("refusing to execute: no terminal to confirm each job. Pass --yes to run without asking.")
         return 2
     cfg, tasks = allo.load(here)
-    only = {x.strip() for x in a.only.split(",") if x.strip()} if a.only else None
-    jobs = select(cfg, tasks, here, now, only, a.allow_unverified, a.rerun)
-    if a.execute:
-        out(f"RUN as of {now:%Y-%m-%d %H:%M} UTC: executing" + ("" if a.yes else ", asking before each job"))
+    if a.plan:
+        try:
+            plan = load_plan(a.plan)
+            jobs = jobs_from_plan(plan, here, cfg, tasks, now, a.max_plan_age)
+        except PlanError as e:
+            out(f"refusing to run plan {a.plan}: {e}")
+            return 2
+        head = f"RUN plan {plan['hash'][7:19]} saved {plan['created_at']}"
+        if a.execute:
+            out(head + ": executing" + ("" if a.yes else ", asking before each job"))
+        else:
+            out(head + ": it still matches, nothing starts. Add --execute to run it.")
+        options = None
     else:
-        out(f"RUN as of {now:%Y-%m-%d %H:%M} UTC: dry run, nothing starts. Add --execute to run.")
+        only = {x.strip() for x in a.only.split(",") if x.strip()} if a.only else None
+        jobs = select(cfg, tasks, here, now, only, a.allow_unverified, a.rerun)
+        options = {"only": sorted(only) if only else None, "allow_unverified": a.allow_unverified, "rerun": a.rerun}
+        out(f"RUN as of {now:%Y-%m-%d %H:%M} UTC: dry run, nothing starts.")
     out("")
     failed = run_jobs(jobs, here, a.execute, None if a.yes else confirm, out)
     runnable = sum(1 for j in jobs if not j["skip"])
     out("")
     out(f"{len(jobs)} jobs: {runnable} runnable, {len(jobs) - runnable} skipped"
         + (f", {failed} failed" if a.execute else ""))
+    if options is not None:
+        path = Path(a.save_plan) if a.save_plan else here / PLAN_FILE
+        h = save_plan(path, here, cfg, tasks, jobs, now, options)
+        cmd = "allo-router" + ("" if str(here) == "." else f" --dir {shlex.quote(str(here))}")
+        out(f"Saved this plan to {path} ({h[7:19]}). To run exactly it, within {a.max_plan_age:g} minutes and "
+            "before readings or config change:")
+        out(f"  {cmd} run --plan {shlex.quote(str(path))} --execute")
     if a.execute:
         out("Record fresh readings with `allo-router set` before the next plan; the executor does not measure usage.")
     return 1 if failed else 0

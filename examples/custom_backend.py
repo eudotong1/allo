@@ -8,8 +8,8 @@ that a person, a cron job or another agent picks up. Point a pool at it in pools
 
 then run this script instead of `allo-router run`. It takes the same flags:
 
-    python3 examples/custom_backend.py <config-folder>                     dry run
-    python3 examples/custom_backend.py <config-folder> --execute --yes     write the files
+    python3 examples/custom_backend.py <config-folder>                                        preview, saves plan.json
+    python3 examples/custom_backend.py <config-folder> --plan <config-folder>/plan.json --execute --yes   write the files
 """
 import re
 import sys

@@ -6,3 +6,4 @@ build/
 /tasks.json
 runs.jsonl
 runs/
+plan.json
