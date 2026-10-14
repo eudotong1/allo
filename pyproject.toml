@@ -1,6 +1,6 @@
 [project]
 name = "allo-router"
-version = "0.4.0"
+version = "0.5.0"
 description = "Allo Router: the agent router for maximizing usage. Plans which AI plan should take which job before limits reset."
 readme = "README.md"
 requires-python = ">=3.9"
@@ -11,7 +11,7 @@ dependencies = []
 allo-router = "allo:cli"
 
 [tool.setuptools]
-py-modules = ["allo", "allo_dash", "allo_dash_page", "allo_exec", "allo_report", "allo_sync"]
+py-modules = ["allo", "allo_dash", "allo_dash_page", "allo_exec", "allo_report", "allo_sync", "allo_upload"]
 
 [build-system]
 requires = ["setuptools>=61"]

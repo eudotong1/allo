@@ -448,15 +448,24 @@ def mark_running(here, job, started):
         return None
 
 
-def run_jobs(jobs, here, execute=False, confirm=None, out=print):
+def run_jobs(jobs, here, execute=False, confirm=None, out=print, after_job=None):
     """Print every job; under execute, run the runnable ones in order. Returns the number that failed.
-    Under execute, a skipped job is logged to runs.jsonl as status "skipped"; a preview logs nothing."""
+    Under execute, a skipped job is logged to runs.jsonl as status "skipped"; a preview logs nothing.
+    `after_job`, if given, is called after each line written to runs.jsonl (the opt-in upload uses it)."""
     failed = 0
+
+    def logged():
+        if after_job:
+            try:
+                after_job()
+            except Exception:  # whatever happens after a job must not stop the run
+                pass
 
     def skip(job, reason):
         out(f"      skip: {reason}")
         if execute:
             record(here, job, {"status": "skipped", "reason": reason}, _stamp(), None)
+            logged()
 
     for job in jobs:
         t = job["task"]
@@ -494,6 +503,7 @@ def run_jobs(jobs, here, execute=False, confirm=None, out=print):
             res["readings"] = {"before": before, "after": after}
             res["plan_usage"] = allo_sync.measure(before, after, start_dt, end_dt)
         path = record(here, job, res, started, secs)
+        logged()
         rc = "" if res["returncode"] is None else f", exit {res['returncode']}"
         out(f"      {res['status']}{rc}" + (f", output in {path}" if path else ""))
         if reads:
@@ -534,7 +544,7 @@ def ask(job):
     return input(f"      run #{job['task']['id']} on {job['pool']}? [y/N] ").strip().lower() in ("y", "yes")
 
 
-def cmd_run(here, argv, now, confirm=ask, out=print, interactive=None):
+def cmd_run(here, argv, now, confirm=ask, out=print, interactive=None, after_job=None):
     """`allo-router run`. Returns the process exit code: 0 fine, 1 a job failed, 2 refused to start."""
     ap = argparse.ArgumentParser(prog="allo-router run", description="Preview the plan's jobs and save the plan "
                                  "(default), or run a saved plan with --plan FILE --execute.")
@@ -599,7 +609,7 @@ def cmd_run(here, argv, now, confirm=ask, out=print, interactive=None):
         options = {"only": sorted(only) if only else None, "allow_unverified": a.allow_unverified, "rerun": a.rerun}
         out(f"RUN as of {now:%Y-%m-%d %H:%M} UTC: dry run, nothing starts.")
     out("")
-    failed = run_jobs(jobs, here, a.execute, None if a.yes else confirm, out)
+    failed = run_jobs(jobs, here, a.execute, None if a.yes else confirm, out, after_job if a.execute else None)
     runnable = sum(1 for j in jobs if not j["skip"])
     out("")
     out(f"{len(jobs)} jobs: {runnable} runnable, {len(jobs) - runnable} skipped"
