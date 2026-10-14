@@ -18,6 +18,8 @@ starter config puts every pool on the dry-run backend until you switch it to "sh
   allo-router run --plan plan.json --execute    run that plan, asking before each job
   allo-router run --plan plan.json --execute --yes   without asking (needed when there is no terminal)
   allo-router run --plan plan.json              check a saved plan still matches, start nothing
+  allo-router run --refresh plan.json           re-check a reviewed plan on fresh readings and save it again,
+                                                only if every job comes out as reviewed (for a scheduled run)
   allo-router run --only 1,3                    preview only these task ids
   allo-router run --allow-unverified            also plan on pools flagged STALE / NO READING / RESET PASSED
   allo-router run --rerun                       also plan jobs that already finished ok in runs.jsonl
@@ -240,6 +242,8 @@ PLAN_FILE = "plan.json"
 PLAN_FORMAT = "allo-router-plan/1"
 PLAN_KEYS = ("format", "created_at", "config_dir", "options", "config_hash", "readings_fingerprint", "jobs", "hash")
 DEFAULT_PLAN_AGE_MIN = 60
+# --refresh accepts a plan reviewed up to this long ago: an evening review covers that night, never the next one.
+DEFAULT_REVIEW_AGE_MIN = 960
 FUTURE_SKEW_S = 300
 # Pool fields `allo-router set` writes. If any changed, the plan was made on other readings.
 READING_KEYS = ("remaining_pct", "remaining_usd", "resets_at", "updated_at", "source", "last_sync")
@@ -268,12 +272,13 @@ def job_record(job):
             "skip": job["skip"]}
 
 
-def save_plan(path, here, cfg, tasks, jobs, now, options):
-    """Write the previewed plan to `path` and return its hash."""
+def save_plan(path, here, cfg, tasks, jobs, now, options, extra=None):
+    """Write the previewed plan to `path` and return its hash. `extra` adds fields, such as where a refreshed
+    plan's review came from; they are covered by the hash like everything else."""
     config_hash, readings = fingerprints(cfg, tasks)
     plan = {"format": PLAN_FORMAT, "allo_router": allo.__version__, "created_at": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
             "config_dir": str(here.resolve()), "options": options, "config_hash": config_hash,
-            "readings_fingerprint": readings, "jobs": [job_record(j) for j in jobs]}
+            "readings_fingerprint": readings, "jobs": [job_record(j) for j in jobs], **(extra or {})}
     plan["hash"] = digest(plan)
     Path(path).write_text(json.dumps(plan, indent=2) + "\n")
     return plan["hash"]
@@ -334,6 +339,50 @@ def jobs_from_plan(plan, here, cfg, tasks, now, max_age_min):
     return jobs
 
 
+def reviewed_at(plan):
+    """When a person reviewed this plan: its own time, or for a refreshed plan the time of the review it came from."""
+    return plan.get("reviewed_at") or plan["created_at"]
+
+
+def refresh_jobs(plan, here, cfg, tasks, now, max_review_age_min):
+    """Re-check a reviewed plan on the readings as they are now, for a fresh copy to run shortly after.
+    Nothing new gets through: pools.json (apart from readings) and tasks.json must be as reviewed, the review must
+    be recent, and every job reviewed as runnable must come out with the same pool, prompt, folder and command.
+    A job that has since finished ok is skipped; a job reviewed as skipped stays skipped. Raises PlanError
+    otherwise, so nothing is saved and the run that follows refuses as it would have."""
+    at = allo.parse(reviewed_at(plan))
+    age = (now - at).total_seconds()
+    if age < -FUTURE_SKEW_S:
+        raise PlanError(f"it was reviewed at {reviewed_at(plan)}, which is in the future; check the clock")
+    if age > max_review_age_min * 60:
+        raise PlanError(f"its review is too old: reviewed {age / 60:.0f} minutes ago, limit {max_review_age_min:g} "
+                        "(--max-review-age); preview and review again")
+    if plan["config_dir"] != str(here.resolve()):
+        raise PlanError(f"it was saved for {plan['config_dir']}, not {here.resolve()}")
+    if plan["config_hash"] != fingerprints(cfg, tasks)[0]:
+        raise PlanError("pools.json or tasks.json changed since it was reviewed; preview and review again")
+    o = plan["options"]
+    current = {str(j["task"]["id"]): j for j in
+               select(cfg, tasks, here, now, set(o["only"]) if o["only"] else None, o["allow_unverified"], o["rerun"])}
+    jobs = []
+    for saved in plan["jobs"]:
+        job = current.get(saved["task_id"])
+        if job is None:
+            raise PlanError(f"task #{saved['task_id']} is in it but no longer planned")
+        if saved["skip"]:
+            job["skip"], job["backend"] = saved["skip"], None   # not reviewed as runnable, so it never runs
+        elif job["skip"] and skip_kind(job["skip"]) == "already-ran":
+            job["backend"] = None
+        elif job["skip"]:
+            raise PlanError(f"#{saved['task_id']} would now be skipped: {job['skip']}")
+        else:
+            changed = [k for k, v in job_record(job).items() if saved.get(k) != v]
+            if changed:
+                raise PlanError(f"#{saved['task_id']} would now come out differently ({', '.join(changed)} changed)")
+        jobs.append(job)
+    return jobs
+
+
 # Skip reasons, by the start of the text select() and run_jobs() give them. The report reads the kind, not the text.
 SKIP_KINDS = (("unassigned", "unassigned"), ("pool needs a fresh reading", "needs-reading"),
               ("already ran ok", "already-ran"), ("bad run block", "bad-run-block"),
@@ -382,6 +431,23 @@ def record(here, job, res, started, secs):
     return out
 
 
+CURRENT = "current.json"   # in runs/: the job running right now, for `allo-router dashboard`
+
+
+def mark_running(here, job, started):
+    """Note which job is running, with this process id, so the dashboard can tell a live run from a dead one.
+    Removed when the job ends. Returns the file, or None if it could not be written (the job runs anyway)."""
+    t = job["task"]
+    try:
+        (here / RUN_DIR).mkdir(exist_ok=True)
+        path = here / RUN_DIR / CURRENT
+        path.write_text(json.dumps({"task_id": t["id"], "task_name": t["name"], "pool": job["pool"], "at": started,
+                                    "pid": os.getpid(), "plan": job.get("plan")}) + "\n")
+        return path
+    except OSError:
+        return None
+
+
 def run_jobs(jobs, here, execute=False, confirm=None, out=print):
     """Print every job; under execute, run the runnable ones in order. Returns the number that failed.
     Under execute, a skipped job is logged to runs.jsonl as status "skipped"; a preview logs nothing."""
@@ -411,10 +477,14 @@ def run_jobs(jobs, here, execute=False, confirm=None, out=print):
         reads = isinstance(job.get("sync"), dict) and not isinstance(job["backend"], DryRunBackend)
         before = allo_sync.job_reading(job["sync"], datetime.now(timezone.utc)) if reads else None
         started, t0, start_dt = _stamp(), time.monotonic(), datetime.now(timezone.utc)
+        marker = None if isinstance(job["backend"], DryRunBackend) else mark_running(here, job, started)
         try:
             res = job["backend"].run(job)
         except Exception as e:  # a plugged-in backend must not take down the rest of the run
             res = {"status": "error", "returncode": None, "stdout": "", "stderr": f"{type(e).__name__}: {e}"}
+        finally:
+            if marker:
+                marker.unlink(missing_ok=True)
         secs = time.monotonic() - t0
         if reads:
             end_dt = datetime.now(timezone.utc)
@@ -435,6 +505,29 @@ def run_jobs(jobs, here, execute=False, confirm=None, out=print):
             if res["stderr"].strip():
                 out("      " + res["stderr"].strip().splitlines()[-1])
     return failed
+
+
+def refresh(here, src, dest, now, max_review_age_min, out=print):
+    """`allo-router run --refresh FILE`: save a fresh copy of a reviewed plan, or refuse and save nothing.
+    Returns 0 when saved, 2 when refused."""
+    cfg, tasks = allo.load(here)
+    try:
+        plan = load_plan(src)
+        jobs = refresh_jobs(plan, here, cfg, tasks, now, max_review_age_min)
+    except PlanError as e:
+        out(f"refusing to refresh plan {src}: {e}. Nothing saved.")
+        return 2
+    out(f"REFRESH plan {plan['hash'][7:19]} reviewed {reviewed_at(plan)}, re-checked as of {now:%Y-%m-%d %H:%M} UTC: "
+        "every job comes out as reviewed. Nothing starts.")
+    out("")
+    run_jobs(jobs, here, execute=False, out=out)
+    runnable = sum(1 for j in jobs if not j["skip"])
+    h = save_plan(dest, here, cfg, tasks, jobs, now, plan["options"],
+                  {"reviewed_at": reviewed_at(plan), "reviewed_plan": plan.get("reviewed_plan") or plan["hash"]})
+    out("")
+    out(f"{len(jobs)} jobs: {runnable} runnable, {len(jobs) - runnable} skipped")
+    out(f"Saved the re-checked plan to {dest} ({h[7:19]}). It runs only what was reviewed at {reviewed_at(plan)}.")
+    return 0
 
 
 def ask(job):
@@ -459,15 +552,24 @@ def cmd_run(here, argv, now, confirm=ask, out=print, interactive=None):
     ap.add_argument("--allow-unverified", action="store_true",
                     help="also run on pools flagged STALE, NO READING, NO RESET TIME or RESET PASSED")
     ap.add_argument("--rerun", action="store_true", help="run jobs even if runs.jsonl shows they finished ok")
+    ap.add_argument("--refresh", metavar="FILE", help="re-check this reviewed plan on fresh readings and save a new "
+                    "copy (to --save-plan, default the same file) only if every job comes out as reviewed; starts nothing")
+    ap.add_argument("--max-review-age", type=float, default=DEFAULT_REVIEW_AGE_MIN, metavar="MINUTES",
+                    help=f"with --refresh, refuse a plan reviewed longer ago than this (default {DEFAULT_REVIEW_AGE_MIN})")
     a = ap.parse_args(argv)
     if a.yes and not a.execute:
         ap.error("--yes only makes sense with --execute")
-    if a.plan and (a.only or a.allow_unverified or a.rerun):
-        ap.error("--only, --allow-unverified and --rerun shape the plan: pass them when previewing, not with --plan")
+    if (a.plan or a.refresh) and (a.only or a.allow_unverified or a.rerun):
+        ap.error("--only, --allow-unverified and --rerun shape the plan: pass them when previewing, not with "
+                 + ("--plan" if a.plan else "--refresh"))
     if a.plan and a.save_plan:
         ap.error("--save-plan is for a preview; --plan uses a plan that is already saved")
-    if a.max_plan_age <= 0:
-        ap.error("--max-plan-age must be a positive number of minutes")
+    if a.refresh and (a.plan or a.execute):
+        ap.error("--refresh only saves a re-checked plan; run it afterwards with --plan FILE --execute")
+    if a.max_plan_age <= 0 or a.max_review_age <= 0:
+        ap.error("--max-plan-age and --max-review-age must be positive numbers of minutes")
+    if a.refresh:
+        return refresh(here, a.refresh, a.save_plan or a.refresh, now, a.max_review_age, out)
     if a.execute and not a.plan:
         out(f"refusing to execute: --execute runs a reviewed plan. Preview with `allo-router run`, which saves "
             f"{PLAN_FILE}, then run `allo-router run --plan {PLAN_FILE} --execute`.")
