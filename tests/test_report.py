@@ -89,6 +89,13 @@ def test_execute_logs_usage_tier_estimate_and_reading_flags(tmp_path):
     assert (e["tier"], e["est_usd"], e["pool_kind"], e["pool_flags"]) == ("public", 3, "subscription", [])
 
 
+def test_claude_cache_tokens_are_shown_next_to_input_tokens():
+    u = {"input_tokens": 6, "output_tokens": 672, "cache_read_input_tokens": 14949, "cache_creation_input_tokens": 10343,
+         "cost_usd": 0.00255469}
+    assert allo_report.usage_text(u) == "$0.0026 reported, 6 in (+25,292 cache) / 672 out tok"
+    assert allo_report.usage_text({"input_tokens": 50, "cached_input_tokens": 10, "output_tokens": 7}) == "50 in / 7 out tok"
+
+
 def test_codex_style_jsonl_usage_is_logged(tmp_path):
     write_cfg(tmp_path, [dict(SUB, run={"backend": "shell", "command": FAKE_CODEX})], [task(1)])
     execute(tmp_path)

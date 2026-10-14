@@ -191,7 +191,10 @@ def usage_text(u):
         return "not reported"
     parts = [money(u["cost_usd"]) + " reported"] if "cost_usd" in u else []
     if "input_tokens" in u or "output_tokens" in u:
-        parts.append(f"{u.get('input_tokens', 0):,} in / {u.get('output_tokens', 0):,} out tok")
+        # Claude counts cache reads and writes outside input_tokens; Codex's cached_input_tokens is already inside it.
+        cache = u.get("cache_read_input_tokens", 0) + u.get("cache_creation_input_tokens", 0)
+        parts.append(f"{u.get('input_tokens', 0):,} in" + (f" (+{cache:,} cache)" if cache else "")
+                     + f" / {u.get('output_tokens', 0):,} out tok")
     return ", ".join(parts)
 
 
@@ -296,6 +299,7 @@ def render(here, rows, prices, scope, bad, now):
 
 CSV_FIELDS = ("period", "at", "task_id", "task_name", "pool", "pool_kind", "backend", "status", "returncode",
               "seconds", "skip_kind", "reason", "pool_flags", "reported_cost_usd", "input_tokens", "output_tokens",
+              "cache_read_input_tokens", "cache_creation_input_tokens", "cached_input_tokens",
               "cost_basis_usd", "cost_basis_source", "price_factor", "baseline_factor", "est_cost_usd",
               "est_baseline_usd", "est_saved_usd", "misroute", "plan", "output")
 
@@ -312,7 +316,7 @@ def write_csv(path, rows, prices):
                         "backend": e.get("backend"), "status": e.get("status"), "returncode": e.get("returncode"),
                         "seconds": e.get("seconds"), "skip_kind": e.get("skip_kind"), "reason": e.get("reason"),
                         "pool_flags": ";".join(e.get("pool_flags") or []), "reported_cost_usd": u.get("cost_usd"),
-                        "input_tokens": u.get("input_tokens"), "output_tokens": u.get("output_tokens"),
+                        **{k: u.get(k) for k in USAGE_KEYS},
                         "cost_basis_usd": r["basis"], "cost_basis_source": r["basis_source"],
                         "price_factor": r["factor"], "baseline_factor": prices.base if r["basis"] is not None else None,
                         "est_cost_usd": r["est"], "est_baseline_usd": r["base"], "est_saved_usd": r["saved"],
