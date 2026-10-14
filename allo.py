@@ -15,6 +15,7 @@ Readings can be typed in with `set` or read from local files with `sync` (allo_s
   allo-router run                  preview each job and save the plan to plan.json; see allo_exec.py
   allo-router run --plan plan.json --execute   run exactly that reviewed plan through each pool's backend
   allo-router report               summarize runs.jsonl as markdown (--period day|week, --since, --csv FILE)
+  allo-router dashboard            a read-only local page on 127.0.0.1: plans, queue, schedule, what ran; see allo_dash.py
   allo-router --dir examples       use another folder
   allo-router --no-sync            do not auto-sync before printing or previewing a plan
   allo-router --version            print the version
@@ -368,8 +369,8 @@ def cmd_init(here):
 
 
 def main(argv):
-    # run, report and sync have their own --help; everything else gets this file's usage.
-    if ("-h" in argv or "--help" in argv) and not {"run", "report", "sync"} & set(argv[:3]):
+    # run, report, sync and dashboard have their own --help; everything else gets this file's usage.
+    if ("-h" in argv or "--help" in argv) and not {"run", "report", "sync", "dashboard"} & set(argv[:3]):
         print(__doc__)
         return
     here = Path(".")
@@ -401,6 +402,9 @@ def main(argv):
         elif argv and argv[0] == "report":
             import allo_report
             sys.exit(allo_report.cmd_report(here, argv[1:], datetime.now(timezone.utc)))
+        elif argv and argv[0] == "dashboard":
+            import allo_dash  # never syncs: the dashboard only reads
+            sys.exit(allo_dash.cmd_dashboard(here, argv[1:], lambda: datetime.now(timezone.utc)))
         else:
             if autosync and not argv:
                 import allo_sync
