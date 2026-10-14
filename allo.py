@@ -162,6 +162,7 @@ def fmt_left(r):
 def propose(tasks, rows, tiers, opts):
     """Tasks in priority order. A credit pool takes 'api' jobs while dollars fit above its reserve.
     Other jobs go to the eligible subscription with the most known headroom, then unknowns.
+    Returns ([(task, pool_id or None, note, eligible_pool_ids)], credit budget left).
     `tiers` is the ordered list of data tiers, least sensitive first. A pool may only take a task
     whose tier is at or below the most sensitive tier the pool lists."""
     rank = {t: i for i, t in enumerate(tiers)}
@@ -178,7 +179,7 @@ def propose(tasks, rows, tiers, opts):
                 if rank[t["tier"]] <= max(rank[x] for x in r["p"]["tiers"])]
         if credit and "api" in t.get("needs", []) and t["est_usd"] <= budget and credit["p"]["id"] in elig:
             budget -= t["est_usd"]
-            out.append((t, credit["p"]["id"], elig))
+            out.append((t, credit["p"]["id"], "", elig))
             continue
         cand = [r for r in rows if r["p"]["id"] in elig and r["p"]["kind"] != "credit_usd"
                 and rank[t["tier"]] <= rank[sub_max_tier] and (r["left"] is None or r["left"] >= min_headroom)]
@@ -186,26 +187,37 @@ def propose(tasks, rows, tiers, opts):
         if cand:
             c = cand[0]
             tag = "headroom UNKNOWN, confirm first" if c["left"] is None else f"{c['left']:.0f}% left"
-            out.append((t, f"{c['p']['id']} ({tag})", elig))
+            out.append((t, c["p"]["id"], tag, elig))
         else:
-            out.append((t, None, elig))
+            out.append((t, None, "", elig))
     return out, budget
 
 
-def render(here, now):
+def load(here):
     cfg = json.loads((here / "pools.json").read_text())
     tasks = json.loads((here / "tasks.json").read_text())["tasks"]
-    tiers = cfg.get("tiers", ["public", "private"])
+    return cfg, tasks
+
+
+def build_plan(cfg, tasks, now):
+    """The plan as data: (pool rows, assignments, credit left). Shared by the printout and the executor."""
     rows = pool_rows(cfg["pools"], now)
+    plan, left = propose(tasks, rows, cfg.get("tiers", ["public", "private"]), cfg.get("options", {}))
+    return rows, plan, left
+
+
+def render(here, now):
+    cfg, tasks = load(here)
+    rows, plan, left = build_plan(cfg, tasks, now)
     lines = [f"USAGE PLAN (read-only) as of {now:%Y-%m-%d %H:%M} UTC", "",
              f"{'pool':<32}{'left':>7}{'hrs to reset':>14}  flags"]
     for r in rows:
         h = f"{r['hours']:.0f}" if r["hours"] is not None else "?"
         lines.append(f"{r['p']['label']:<32}{fmt_left(r):>7}{h:>14}  {', '.join(r['flags'])}")
-    plan, left = propose(tasks, rows, tiers, cfg.get("options", {}))
     lines += ["", "PROPOSED ASSIGNMENT (nothing is sent; you approve each one)"]
-    for t, pool, elig in plan:
-        lines.append(f" #{t['id']:<2} {t['name'][:52]:<53} tier={t['tier']:<10} ${t['est_usd']:<4} -> {pool or 'UNASSIGNED'}")
+    for t, pool, note, elig in plan:
+        target = f"{pool} ({note})" if note else pool or "UNASSIGNED"
+        lines.append(f" #{t['id']:<2} {t['name'][:52]:<53} tier={t['tier']:<10} ${t['est_usd']:<4} -> {target}")
         if not pool:
             lines.append(f"      eligible pools by tier: {', '.join(elig) or 'none'}")
     if any(r["p"]["kind"] == "credit_usd" for r in rows):
