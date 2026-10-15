@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="/app.css">
+<title>Privacy: Allo Router hosted dashboard</title>
+</head>
+<body>
+<div class="wrap">
+  <nav><a class="mark" href="/">Allo Router</a></nav>
+  <main class="page">
+    <div class="prose">
+      <h1>What this site gets</h1>
+      <p class="lede">The hosted dashboard is opt-in and off by default. Nothing reaches it until you run <code>allo-router connect</code> on a computer and approve that computer here.</p>
+      <h2>Sent, per job</h2>
+      <p>A hashed id (an HMAC made with a salt that never leaves your computer), when the job started rounded to the minute, the plan it went to as pool-1, pool-2 (the names you gave your plans stay on your computer), the plan type (subscription or API credit), the provider (Claude, Codex, Gemini, API or other), whether it ran, why it missed (from a fixed list), and the estimated saving in USD.</p>
+      <h2>Never sent</h2>
+      <p>Job names, prompts, commands, code, output, file names or paths, plan names or labels, usage readings or "% left", token counts, your hostname or username, and API keys. The server rejects any upload with a field that isn't on the list above.</p>
+      <h2>From your GitHub sign-in</h2>
+      <p>Your GitHub user id and login, nothing else. The sign-in asks for no extra permissions.</p>
+      <h2>How long it's kept</h2>
+      <p>Job rows are deleted after 90 days. A computer's token stops working after 90 days without an upload.</p>
+      <h2>Check it and stop it</h2>
+      <p><code>allo-router connect --show</code> prints exactly what the next upload would send, without sending it. Every upload is logged on your computer in <code>~/.config/allo-router/connect.log</code>. <code>allo-router disconnect</code> revokes the token and deletes that computer's history here; Disconnect on the dashboard does the same. Delete my account removes everything.</p>
+    </div>
+  </main>
+  <footer><span class="mark">Allo Router</span><span>app.allorouter.com</span><a href="/">Dashboard</a></footer>
+</div>
+</body>
+</html>
