@@ -282,12 +282,12 @@ function map(d, lines, now) {
     if (hidden) s += `<text x="${X1 - 4}" y="${y + 26}" text-anchor="end" class="more"><a href="#jobs">+${hidden} more, see all jobs below ↓</a></text>`;
   });
   s += `</svg>`;
-  const sample = lines.find((l) => l.pool)?.color || "var(--codex)";
+  const planKeys = lines.filter((l) => l.pool).map((l) => `<span><svg width="28" height="14"><rect width="28" height="14" rx="2" fill="${l.color}"/></svg>${esc(l.short)}</span>`).join("");
   return `<div class="map">${s}</div>
   <div class="legend" aria-hidden="true">
-    <span><svg width="34" height="18"><rect x="1" y="1" width="32" height="16" fill="var(--ink)"/></svg>Ran</span>
-    <span><svg width="34" height="18"><rect x="1" y="1" width="32" height="16" fill="var(--paper)" stroke="var(--reset-text)" stroke-width="1.5" stroke-dasharray="4 3"/></svg>Missed</span>
-    <span><svg width="28" height="10"><rect width="28" height="10" fill="${sample}"/></svg>The plan that took it</span>
+    <span><b>Color = the plan that ran the job:</b></span>
+    ${planKeys}
+    <span><svg width="34" height="18"><rect x="1" y="1" width="32" height="16" fill="var(--paper)" stroke="var(--reset-text)" stroke-width="1.5" stroke-dasharray="4 3"/></svg>Job missed</span>
     ${live ? `<span><svg width="28" height="10"><rect y="3" width="28" height="4" fill="var(--rule)"/></svg>Rest of the ${d.range.key === "30d" ? "period" : "week"}</span>` : ""}
     <span>Jobs that start close together sit in queue order, not to time scale.</span>
   </div>`;
