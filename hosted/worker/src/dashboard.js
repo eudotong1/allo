@@ -73,6 +73,7 @@ export function summarize(rows, installs, now = new Date()) {
       computer: names[r.install_id] || null,
       title: r.title || null, model: r.model || null, effort: r.effort || null,
       heartbeat_at: r.heartbeat_at || null, started_at: r.at,
+      usd: (typeof r.est_saved_usd === "number" && r.est_saved_usd > 0 && r.plan_type !== "orchestrator") ? r.est_saved_usd : null,
       seconds: isRunning && beatMs ? Math.max(0, Math.round((now.getTime() - Date.parse(String(r.at).replace(/Z$/, ":00Z"))) / 1000)) : null,
     };
     jobs.push(row);
@@ -89,15 +90,18 @@ export function summarize(rows, installs, now = new Date()) {
   for (const j of jobs) {
     const k = j.title ? `${j.line}|${j.title}` : `${j.line}|#${j.n}`; // untitled jobs are never merged
     const g = groups.get(k);
-    if (!g) { groups.set(k, { ...j, runs: 1, ok: j.status === "ok" ? 1 : 0, failed: j.status === "ok" || j.status === "running" ? 0 : 1, first_at: j.at }); continue; }
+    const one = { at: j.at, end: j.status === "running" ? null : j.heartbeat_at, status: j.status, usd: j.usd };
+    if (!g) { groups.set(k, { ...j, list: [one], usd_total: j.usd || 0, priced: j.usd ? 1 : 0, runs: 1, ok: j.status === "ok" ? 1 : 0, failed: j.status === "ok" || j.status === "running" ? 0 : 1, first_at: j.at }); continue; }
     g.runs += 1;
+    g.list.push(one);
+    if (j.usd) { g.usd_total += j.usd; g.priced += 1; }
     if (j.status === "ok") g.ok += 1; else if (j.status !== "running") g.failed += 1;
     if (j.at < g.first_at) g.first_at = j.at;
     if (j.at >= g.at || j.status === "running") Object.assign(g, { at: j.at, status: j.status === "running" ? "running" : (g.status === "running" ? "running" : j.status), seconds: j.seconds ?? g.seconds, started_at: j.started_at, heartbeat_at: j.heartbeat_at || g.heartbeat_at, model: j.model || g.model, effort: j.effort || g.effort });
     if (j.miss.length) g.miss = j.miss;
   }
   const tasks = [...groups.values()].sort((a, b) => a.at.localeCompare(b.at));
-  tasks.forEach((t, i) => { t.n = i + 1; });
+  tasks.forEach((t, i) => { t.n = i + 1; t.usd_total = t.priced ? Math.round(t.usd_total * 100) / 100 : null; t.list.sort((a, b) => b.at.localeCompare(a.at)); });
   const orch = new Set(ordered.filter((l) => l.plan_type === "orchestrator").map((l) => l.key));
   for (const l of ordered) { l.runs = l.jobs; const mine = tasks.filter((t) => t.line === l.key && t.status !== "running"); l.jobs = mine.length; l.ran = mine.filter((t) => t.ok > 0).length; }
   // Orchestrator (Grok Bot) rows mirror the work it hands to another plan, so they are not counted twice.

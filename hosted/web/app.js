@@ -87,7 +87,7 @@ function chipToggle(d) {
   ).join("");
   const hasMeta = (d.jobs || []).some((j) => j.model || j.effort || j.title);
   if (!hasMeta) return "";
-  return `<div class="chip-modes" role="group" aria-label="Colour chips by">${buttons}</div>`;
+  return `<div class="chip-modes" role="group" aria-label="Colour chips by">${buttons}<a class="jump" href="#jobs">See every job ↓</a></div>`;
 }
 
 function fmtElapsed(sec) {
@@ -276,7 +276,7 @@ function map(d, lines, now) {
       s += `<g class="${missed ? "car-x" : (isRun ? "car-run" : "car")}"><title>${esc(tip)}</title>` +
         `<rect x="${cx.toFixed(1)}" y="${y - 9}" width="${w}" height="18"${fillAttr}/><text x="${(cx + w / 2).toFixed(1)}" y="${y + 4}">${esc(label)}</text></g>`;
     }
-    if (hidden) s += `<text x="${X1 - 4}" y="${y + 26}" text-anchor="end" class="more">+${hidden} more, see the table</text>`;
+    if (hidden) s += `<text x="${X1 - 4}" y="${y + 26}" text-anchor="end" class="more"><a href="#jobs">+${hidden} more, see all jobs below ↓</a></text>`;
   });
   s += `</svg>`;
   const sample = lines.find((l) => l.pool)?.color || "var(--codex)";
@@ -357,13 +357,68 @@ const about = `<section class="part">
     </dl>
   </section>`;
 
+// ---------- Jobs: pools -> tasks -> runs, collapsed by default ----------
+const openKeys = new Set();     // survives the polling re-render
+const shown = new Map();        // key -> how many rows to show
+const PAGE = 50;
+const dur = (a, b) => {
+  if (!a || !b) return "n/a";
+  const s = Math.max(0, (parseMinute(b) - parseMinute(a)) / 1000);
+  return s < 60 ? "<1m" : s < 3600 ? `${Math.round(s / 60)}m` : `${Math.floor(s / 3600)}h ${Math.round((s % 3600) / 60)}m`;
+};
+const when = (s) => { const d = parseMinute(s); return `${mdy(d).slice(0, 5)} ${hhmm(d)}`; };
+const usdOr = (x) => (typeof x === "number" ? (x < 0.1 ? "$" + x.toFixed(4) : money(x)) : "n/a");
+function more(key, total) {
+  const n = shown.get(key) || PAGE;
+  return total > n ? `<button type="button" class="more-btn" data-more="${esc(key)}">Show ${Math.min(PAGE, total - n)} more (${total - n} left)</button>` : "";
+}
+function jobsSection(d, lines) {
+  const byLine = {};
+  for (const t of d.jobs) (byLine[t.line] ||= []).push(t);
+  const pools = lines.map((l) => {
+    const tasks = (byLine[l.key] || []).slice().sort((a, b) => b.runs - a.runs || b.at.localeCompare(a.at));
+    const pk = `p:${l.key}`;
+    const nT = shown.get(pk) || PAGE;
+    const rows = tasks.slice(0, nT).map((t) => {
+      const tk = `t:${l.key}:${t.title || "#" + t.n}`;
+      const nR = shown.get(tk) || PAGE;
+      const runs = openKeys.has(tk) ? t.list.slice(0, nR).map((r) =>
+        `<div class="run" role="row"><span>${when(r.at)}</span><span class="st st-${esc(r.status)}">${esc(r.status)}</span><span>${r.status === "running" ? "running" : dur(r.at, r.end)}</span><span class="r">${usdOr(r.usd)}</span></div>`).join("") + more(tk, t.list.length) : "";
+      return `<details class="task" data-k="${esc(tk)}"${openKeys.has(tk) ? " open" : ""}><summary>` +
+        `<span class="tname">${esc(t.title || "Untitled #" + t.n)}</span><span class="r">${t.runs}</span>` +
+        `<span>${esc(t.model || "n/a")}</span><span>${esc((t.effort || "n/a").replace("_", " "))}</span>` +
+        `<span class="r">${usdOr(t.usd_total)}</span><span>${when(t.first_at)}</span><span>${when(t.at)}</span></summary>` +
+        `<div class="runs"><div class="run h" role="row"><span>Started (UTC)</span><span>Status</span><span>Duration</span><span class="r">API value (est.)</span></div>${runs}</div></details>`;
+    }).join("");
+    const head = `<div class="task-h"><span>Task</span><span class="r">Runs</span><span>Model</span><span>Effort</span><span class="r">API value</span><span>First run</span><span>Last run</span></div>`;
+    return `<details class="pool" data-k="${esc(pk)}"${openKeys.has(pk) ? " open" : ""}><summary><span class="sw" style="background:${l.color}"></span>` +
+      `<b>${esc(l.name)}</b><span class="meta">${plural(tasks.length, "task")} · ${plural(l.runs || 0, "run")}</span><span class="chev" aria-hidden="true">▸</span></summary>` +
+      (openKeys.has(pk) ? head + rows + more(pk, tasks.length) : "") + `</details>`;
+  }).join("");
+  return `<section class="jobs" id="jobs"><div class="jobs-head"><h2 class="cond">Jobs</h2>` +
+    `<p class="intro">Every task by plan. Click a plan to see its tasks, and a task to see each run.</p></div>${pools}</section>`;
+}
+function wireJobs() {
+  for (const el of document.querySelectorAll("details[data-k]")) {
+    el.addEventListener("toggle", () => {
+      const k = el.getAttribute("data-k");
+      const was = openKeys.has(k);
+      if (el.open) openKeys.add(k); else openKeys.delete(k);
+      if (was !== el.open) render();
+    });
+  }
+  for (const b of document.querySelectorAll("[data-more]")) {
+    b.onclick = () => { const k = b.getAttribute("data-more"); shown.set(k, (shown.get(k) || PAGE) + PAGE); render(); };
+  }
+}
+
 function render() {
   if (!data) return;
   const now = new Date();
   const lines = styleLines(data.lines);
   const body = data.computers.length === 0
     ? empty()
-    : (lines.length || (data.running && data.running.length) ? runningStrip(data, lines) + allocation(data, lines) + chipToggle(data) + map(data, lines, now) : `<section class="empty"><h2>No jobs in this period</h2><p class="intro">Jobs show up here after <code>run --execute</code> finishes them on a connected computer.</p></section>`) +
+    : (lines.length || (data.running && data.running.length) ? runningStrip(data, lines) + allocation(data, lines) + chipToggle(data) + map(data, lines, now) + jobsSection(data, lines) : `<section class="empty"><h2>No jobs in this period</h2><p class="intro">Jobs show up here after <code>run --execute</code> finishes them on a connected computer.</p></section>`) +
       tables(data, lines) + computers(data);
   const note = `<p class="note"><b>Only job numbers, plans, outcomes and estimates reach this page.</b> Job names and everything else stay on your computer; open <code>allo-router dashboard</code> there to see them. Times are UTC.</p>`;
   document.getElementById("app").innerHTML = `${nav(data)}<div class="wrap">${note}${header(data, now)}${body}${about}
@@ -378,6 +433,7 @@ function render() {
   el.innerHTML = sp.left > 0 ? `Free for the first ${sp.limit} users: <b>${sp.left} of ${sp.limit}</b> free spots left` : `All ${sp.limit} free spots are taken`;
   el.hidden = false;
   document.getElementById("signout").onclick = signOut;
+  wireJobs();
   for (const b of document.querySelectorAll("[data-chip-mode]")) {
     b.onclick = () => { chipMode = b.getAttribute("data-chip-mode"); render(); };
   }
