@@ -11,7 +11,7 @@ dependencies = []
 allo-router = "allo:cli"
 
 [tool.setuptools]
-py-modules = ["allo", "allo_dash", "allo_dash_page", "allo_exec", "allo_report", "allo_sync", "allo_upload"]
+py-modules = ["allo", "allo_dash", "allo_dash_page", "allo_exec", "allo_live", "allo_report", "allo_sync", "allo_upload"]
 
 [build-system]
 requires = ["setuptools>=61"]
