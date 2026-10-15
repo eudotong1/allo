@@ -44,9 +44,9 @@ form.onsubmit = async (e) => {
     await check();
     if (form.hidden) return;
   }
-  const r = await post("/v1/device/approve", { user_code: code, name: form.name.value });
+  const r = await post("/v1/device/approve", { user_code: code });
   if (r.status === 200) done(`Approved "${r.body.computer}". Your terminal finishes connecting within a few seconds; then see your dashboard.`);
-  else say(r.body?.error === "name must be 1 to 40 characters" ? "Use a name of 1 to 40 characters, without < or >." : "Couldn't approve: " + (r.body?.error || r.status), true);
+  else say("Couldn't approve: " + (r.body?.error || r.status), true);
 };
 
 document.getElementById("deny").onclick = async () => {

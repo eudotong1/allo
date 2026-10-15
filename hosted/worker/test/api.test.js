@@ -156,11 +156,10 @@ describe("device approval", () => {
     expect(look.status).toBe("pending");
     // a cross-site POST is refused even with the cookie
     expect((await call("/v1/device/approve", { method: "POST", cookie, origin: "https://evil.example", body: { user_code: dev.user_code, name: "x" } })).status).toBe(403);
-    expect((await call("/v1/device/approve", { method: "POST", cookie, body: { user_code: dev.user_code, name: "<b>" } })).status).toBe(400);
     expect((await call("/v1/device/approve", { method: "POST", cookie, body: { user_code: dev.user_code, name: "Work laptop" } })).status).toBe(200);
 
     const t = await (await poll()).json();
-    expect(t.computer).toBe("Work laptop");
+    expect(t.computer).toBe("computer-1");
     expect(t.token).toMatch(/^allo_up_/);
     expect((await (await poll()).json()).error).toBe("invalid_grant");
     const stored = await env.DB.prepare("SELECT token_hash FROM installs").first();
@@ -205,7 +204,7 @@ describe("dashboard", () => {
     expect(d.login).toBe("alice");
     expect(d.totals).toEqual({ jobs: 4, ran: 2, missed: 2, saved: 5.12, priced: 3 });
     expect(d.lines.map((l) => [l.pool, l.jobs, l.missed])).toEqual([["pool-1", 2, 1], ["pool-2", 1, 0], [null, 1, 1]]);
-    expect(d.computers).toMatchObject([{ name: "Studio Mac", jobs: 4 }]);
+    expect(d.computers).toMatchObject([{ name: "computer-1", jobs: 4 }]);
     expect(d.spots.left).toBe(99);
 
     const etag = r.headers.get("ETag");
@@ -319,5 +318,17 @@ describe("summarize", () => {
     const s = summarize(rows, [{ id: 1, name: "Studio" }, { id: 2, name: "Laptop" }]);
     expect(s.jobs.map((j) => j.n)).toEqual([1, 2]);
     expect(s.lines.map((l) => l.computer)).toEqual(["Studio", "Laptop"]);
+  });
+
+  it("names computers computer-1, computer-2 and ignores user-typed names", async () => {
+    const { cookie } = await devSignIn("namer");
+    const names = [];
+    for (const typed of ["Eman's MacBook", "<b>x</b>"]) {
+      const dev = await (await call("/v1/device", { method: "POST", body: {}, origin: null })).json();
+      const r = await call("/v1/device/approve", { method: "POST", cookie, body: { user_code: dev.user_code, name: typed } });
+      expect(r.status).toBe(200);
+      names.push((await r.json()).computer);
+    }
+    expect(names).toEqual(["computer-1", "computer-2"]);
   });
 });

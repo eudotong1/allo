@@ -306,8 +306,11 @@ async function deviceDecide(request, env, user, approve) {
     await env.DB.prepare("UPDATE device_codes SET status = 'denied', user_id = ? WHERE device_hash = ?").bind(user.id, d.device_hash).run();
     return json({ ok: true, status: "denied" });
   }
-  const name = typeof body?.name === "string" ? body.name.replace(/\s+/g, " ").trim() : "";
-  if (!name || name.length > 40 || /[<>\u0000-\u001f]/.test(name)) return error(400, "name must be 1 to 40 characters");
+  // Names are never user-typed: each computer is computer-1, computer-2, ... per user, in approval order.
+  const top = await env.DB.prepare(
+    "SELECT MAX(CAST(SUBSTR(name, 10) AS INTEGER)) AS n FROM installs WHERE user_id = ? AND name LIKE 'computer-%'",
+  ).bind(user.id).first();
+  const name = `computer-${(top?.n || 0) + 1}`;
   const inst = await env.DB.prepare("INSERT INTO installs (user_id, name, created_at) VALUES (?, ?, ?) RETURNING id")
     .bind(user.id, name, iso()).first();
   const upd = await env.DB.prepare(
