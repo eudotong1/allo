@@ -337,9 +337,13 @@ async function uploadJobs(request, env) {
   if (!fresh && inst.window_count >= UPLOADS_PER_HOUR) return error(429, "rate_limited");
   const stmts = body.jobs.map((j) =>
     env.DB.prepare(
-      "INSERT OR IGNORE INTO jobs (install_id, id, user_id, at, pool, plan_type, provider, status, skip, miss, est_saved_usd) " +
-      "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-    ).bind(inst.id, j.id, inst.user_id, j.at, j.pool, j.plan_type, j.provider, j.status, j.skip, JSON.stringify(j.miss), j.est_saved_usd),
+      "INSERT INTO jobs (install_id, id, user_id, at, pool, plan_type, provider, status, skip, miss, est_saved_usd, title, model, effort) " +
+      "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) " +
+      "ON CONFLICT(install_id, id) DO UPDATE SET pool=excluded.pool, plan_type=excluded.plan_type, " +
+      "provider=excluded.provider, status=excluded.status, skip=excluded.skip, miss=excluded.miss, " +
+      "est_saved_usd=excluded.est_saved_usd, title=excluded.title, model=excluded.model, effort=excluded.effort",
+    ).bind(inst.id, j.id, inst.user_id, j.at, j.pool, j.plan_type, j.provider, j.status, j.skip, JSON.stringify(j.miss),
+           j.est_saved_usd, j.title, j.model, j.effort),
   );
   stmts.push(
     env.DB.prepare("UPDATE installs SET last_upload_at = ?, window_start = ?, window_count = ? WHERE id = ?")
@@ -370,7 +374,7 @@ async function dashboard(request, env, user, url) {
   const [installs, rows, spotInfo] = await Promise.all([
     env.DB.prepare("SELECT id, name, created_at, last_upload_at FROM installs WHERE user_id = ? AND revoked_at IS NULL AND token_hash IS NOT NULL ORDER BY created_at")
       .bind(user.id).all().then((r) => r.results),
-    env.DB.prepare("SELECT install_id, id, at, pool, plan_type, provider, status, skip, miss, est_saved_usd FROM jobs " +
+    env.DB.prepare("SELECT install_id, id, at, pool, plan_type, provider, status, skip, miss, est_saved_usd, title, model, effort FROM jobs " +
       "WHERE user_id = ? AND at >= ? AND at < ? ORDER BY at, install_id, id LIMIT 5000")
       .bind(user.id, minuteKey(range.start), minuteKey(range.end)).all().then((r) => r.results),
     spots(env),

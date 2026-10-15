@@ -328,14 +328,14 @@ function yard(s, now, pal) {
     // cars: running solid in the plan colour at Now; queued outlined after the next-run marker, in queue order
     let x = (xNext || NOW + 40) + 8;
     const run = s.running && s.running.alive && s.running.pool === p.id ? s.running : null;
-    if (run) g += car(NOW - 36, y, run.task_id, "s", c.line);
+    if (run) g += car(NOW - 36, y, run.task_id, "s", c.line, run.name);
     for (const q of queued.filter(q => q.pool === p.id && !(run && String(q.task_id) === String(run.task_id)))) {
       if (x > (beyond ? END : xr) - 40) break;
-      g += car(x, y, q.task_id, "q"); x += 38;
+      g += car(x, y, q.task_id, "q", null, q.name); x += Math.max(38, Math.min(120, 8 + shortJob(q.name, q.task_id).replace(/&[^;]+;/g, " ").length * 7 + 8));
     }
   });
   let cx = 14;
-  for (const q of stuck.slice(0, 5)) { g += car(cx, yIn, q.task_id, "x"); cx += 38; }
+  for (const q of stuck.slice(0, 5)) { g += car(cx, yIn, q.task_id, "x", null, q.name); cx += Math.max(38, Math.min(120, 8 + shortJob(q.name, q.task_id).replace(/&[^;]+;/g, " ").length * 7 + 8)); }
   g += `<circle cx="${X0}" cy="${yIn}" r="13" fill="var(--paper)" stroke="var(--ink)" stroke-width="4"/>
         <text x="0" y="${yIn + 30}" class="ax">tasks.json, ${s.queue.length} job${s.queue.length === 1 ? "" : "s"}${stuck.length ? `, ${stuck.length} no plan fits` : ""}</text>
         <text x="${X0}" y="${yIn + 34}" text-anchor="middle" class="ax" style="fill:var(--ink);font-weight:700">allo-router</text>`;
@@ -349,9 +349,17 @@ function yard(s, now, pal) {
       <span><svg width="30" height="10"><path d="M0 5 H30" stroke="var(--none)" stroke-width="6" stroke-dasharray="8 5"/></svg>No usable reading</span>
     </div></section>`;
 }
-function car(x, y, id, kind, fill) {
-  const label = `#${esc(id)}`, w = Math.max(30, 8 + label.length * 7);
-  return `<g class="car-${kind}"><rect x="${x}" y="${y - 8}" width="${w}" height="16"${fill ? ` style="fill:${fill}"` : ""}/><text x="${x + w / 2}" y="${y + 4}">${label}</text></g>`;
+function shortJob(name, id) {
+  const raw = (name && String(name).trim()) || "";
+  const line = raw.split("\n")[0].trim();
+  if (!line) return `#${esc(id)}`;
+  return line.length > 18 ? esc(line.slice(0, 16)) + "…" : esc(line);
+}
+function car(x, y, id, kind, fill, name) {
+  const label = shortJob(name, id);
+  const tip = name ? `${esc(String(name))} (#${esc(id)})` : `#${esc(id)}`;
+  const w = Math.max(30, Math.min(120, 8 + label.replace(/&[^;]+;/g, " ").length * 7));
+  return `<g class="car-${kind}"><title>${tip}</title><rect x="${x}" y="${y - 8}" width="${w}" height="16"${fill ? ` style="fill:${fill}"` : ""}/><text x="${x + w / 2}" y="${y + 4}">${label}</text></g>`;
 }
 
 function jobRow(r, now, pal, cls) {

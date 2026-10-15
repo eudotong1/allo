@@ -3,9 +3,23 @@
 import { api, DAYS, esc, hhmm, mdy, parseMinute, post, signInUrl, signOut } from "/common.js";
 
 const POLL_MS = 15000;
-const COLORS = { codex: "var(--codex)", claude: "var(--claude)", api: "var(--credit)", gemini: "var(--gemini)", other: "var(--other)" };
+const COLORS = {
+  codex: "var(--codex)", chatgpt: "var(--codex)",
+  claude: "var(--claude)", claude_personal: "var(--claude)", claude_team: "#C4A35A",
+  api: "var(--credit)", gemini: "var(--gemini)", other: "var(--other)",
+};
 const EXTRA = ["#0F7C8C", "#6A4C93", "#B5651D", "#2E7D32", "#8C2F39"];
-const PROVIDER = { claude: "Claude", codex: "Codex", gemini: "Gemini", api: "API credit", other: "Other" };
+const PROVIDER = {
+  claude: "Claude", claude_personal: "Claude Personal", claude_team: "Claude Team",
+  codex: "ChatGPT", chatgpt: "ChatGPT", gemini: "Gemini", api: "API credit", other: "Other",
+};
+const MODEL_COLOR = {
+  opus: "#6A4C93", sonnet: "#0F7C8C", haiku: "#2E7D32",
+  "gpt-5": "var(--codex)", "gpt-5-codex": "var(--codex)", o3: "#B5651D", "o4-mini": "#8C2F39", other: "var(--other)",
+};
+const EFFORT_COLOR = { low: "#A9A9A2", medium: "#6B8F71", high: "#0F7C8C", very_high: "#6A4C93", xhigh: "#8C2F39" };
+let chipMode = "name"; // name | model | effort
+
 const WHY = {
   failed: "Failed", timeout: "Timed out", error: "Could not start", "unverified-reading": "Ran on an unverified reading",
   unassigned: "No plan fits this job", "needs-reading": "Its plan had no reading", "bad-run-block": "Its plan's run block is invalid",
@@ -21,22 +35,60 @@ let checkedAt = null;
 const money = (x) => (x < 0 ? "-$" : "$") + Math.abs(x).toFixed(2);
 const plural = (n, one, many = one + "s") => `${n} ${n === 1 ? one : many}`;
 
+function planLabel(provider, pool, computer) {
+  const p = provider || "other";
+  const n = pool ? pool.replace("pool-", "") : "";
+  const named = PROVIDER[p] || "Other";
+  // Specific providers are the display name; generic Claude/Other keep pool-N for disambiguation.
+  const base = (p === "claude" || p === "other" || p === "gemini")
+    ? `${named}, pool ${n}`
+    : named;
+  return base + (computer ? ` on ${computer}` : "");
+}
+
 function styleLines(lines) {
   const used = {};
   let extra = 0;
   return lines.map((l) => {
     if (!l.pool) return { ...l, color: "var(--none)", name: "No plan took it", short: "no plan" };
     const p = l.provider || "other";
-    const color = used[p] ? EXTRA[extra++ % EXTRA.length] : COLORS[p] || COLORS.other;
-    used[p] = true;
-    const n = l.pool.replace("pool-", "");
+    const colorKey = p === "codex" ? "chatgpt" : p;
+    const color = used[colorKey] ? EXTRA[extra++ % EXTRA.length] : COLORS[colorKey] || COLORS.other;
+    used[colorKey] = true;
     return {
       ...l, color,
-      name: `${PROVIDER[p] || "Other"}, pool ${n}` + (l.computer ? ` on ${l.computer}` : ""),
-      short: `${l.pool} ${p}`,
+      name: planLabel(p, l.pool, l.computer),
+      short: planLabel(p, l.pool, null),
     };
   });
 }
+
+function chipLabel(j) {
+  if (chipMode === "model" && j.model) return j.model;
+  if (chipMode === "effort" && j.effort) return j.effort.replace("_", " ");
+  if (j.title) {
+    const t = j.title.length > 18 ? j.title.slice(0, 16) + "…" : j.title;
+    return t;
+  }
+  return `#${j.n}`;
+}
+
+function chipFill(j, lineColor) {
+  if (chipMode === "model" && j.model) return MODEL_COLOR[j.model] || lineColor;
+  if (chipMode === "effort" && j.effort) return EFFORT_COLOR[j.effort] || lineColor;
+  return null; // default ink / missed styling
+}
+
+function chipToggle(d) {
+  const modes = [["name", "Name"], ["model", "Model"], ["effort", "Effort"]];
+  const buttons = modes.map(([id, label]) =>
+    `<button type="button" class="chip-mode${chipMode === id ? " on" : ""}" data-chip-mode="${id}" aria-pressed="${chipMode === id}">${label}</button>`
+  ).join("");
+  const hasMeta = (d.jobs || []).some((j) => j.model || j.effort || j.title);
+  if (!hasMeta) return "";
+  return `<div class="chip-modes" role="group" aria-label="Colour chips by">${buttons}</div>`;
+}
+
 
 function nav(d) {
   const periods = RANGES.map(([k, label]) => `<a href="/?range=${k}" class="${k === d.range.key ? "on" : ""}">${label}</a>`).join("");
@@ -185,14 +237,18 @@ function map(d, lines, now) {
     let prevEnd = X0;
     let hidden = 0;
     for (const j of byLine[l.key] || []) {
-      const label = `#${j.n}`;
-      const w = label.length <= 3 ? 34 : label.length === 4 ? 42 : 50;
+      const label = chipLabel(j);
+      const w = Math.max(34, Math.min(120, 10 + label.length * 7.2));
       const cx = Math.max(x(parseMinute(j.at).getTime()), prevEnd + 4);
       if (cx + w > X1 - 4) { hidden++; continue; }
       prevEnd = cx + w;
       const missed = j.miss.length > 0;
-      s += `<g class="${missed ? "car-x" : "car"}"><title>${esc(`${label}: ${j.status}${missed ? ", " + j.miss.map((m) => WHY[m] || m).join(", ") : ""}`)}</title>` +
-        `<rect x="${cx.toFixed(1)}" y="${y - 9}" width="${w}" height="18"/><text x="${(cx + w / 2).toFixed(1)}" y="${y + 4}">${label}</text></g>`;
+      const fill = chipFill(j, l.color);
+      const tip = [`#${j.n}`, j.title, j.model, j.effort ? `effort ${j.effort.replace("_", " ")}` : null, j.status,
+        missed ? j.miss.map((m) => WHY[m] || m).join(", ") : null].filter(Boolean).join(" · ");
+      const fillAttr = (!missed && fill) ? ` style="fill:${fill}"` : "";
+      s += `<g class="${missed ? "car-x" : "car"}"><title>${esc(tip)}</title>` +
+        `<rect x="${cx.toFixed(1)}" y="${y - 9}" width="${w}" height="18"${fillAttr}/><text x="${(cx + w / 2).toFixed(1)}" y="${y + 4}">${esc(label)}</text></g>`;
     }
     if (hidden) s += `<text x="${X1 - 4}" y="${y + 26}" text-anchor="end" class="more">+${hidden} more, see the table</text>`;
   });
@@ -217,14 +273,14 @@ function tables(d, lines) {
   const misses = d.jobs.filter((j) => j.miss.length).map((j) => {
     const l = lineOf[j.line];
     const at = parseMinute(j.at);
-    return `<div role="row"><span class="id">#${j.n}</span><span>${DAYS[at.getUTCDay()]} ${hhmm(at)}</span><span class="seg" style="background:${l.color}"></span>` +
+    return `<div role="row"><span class="id">#${j.n}</span><span>${esc(j.title || ("#" + j.n))}</span><span>${DAYS[at.getUTCDay()]} ${hhmm(at)}</span><span class="seg" style="background:${l.color}"></span>` +
       `<span>${esc(l.short)}</span><span class="why">${j.miss.map((m) => WHY[m] || m).join("; ")}</span></div>`;
   }).join("");
   const period = { week: "this week", last: "last week", "30d": "the last 30 days" }[d.range.key];
   return `<section class="part">
     <div>
       <h2>Where jobs went</h2>
-      <p class="intro">Totals for ${period} by plan. The saving is an estimate: each job priced at API rates, minus its price on the plan that ran it. A subscription job counts as $0. Plans show as pool-1, pool-2: the names you gave them stay on your computer.</p>
+      <p class="intro">Totals for ${period} by plan. The saving is an estimate: each job priced at API rates, minus its price on the plan that ran it. A subscription job counts as $0. Plans show as ChatGPT, Claude Personal or Claude Team when the upload can tell them apart; otherwise as pool-N.</p>
     </div>
     <div>
       <div class="tbl" role="table" aria-label="Jobs by plan">
@@ -269,8 +325,8 @@ const about = `<section class="part">
       <p class="intro">The same list is on the <a href="/privacy">privacy page</a> and in <code>allo-router connect --show</code>, which prints the next upload without sending it.</p>
     </div>
     <dl class="rows">
-      <div class="two"><dt>Sent</dt><dd>A hashed job id, when it started (to the minute), the plan it went to as pool-1, pool-2, its type and provider, whether it ran, why it missed and the estimated saving.</dd></div>
-      <div class="two"><dt>Never sent</dt><dd>Job names, prompts, code, commands, output, file names or paths, plan names, usage readings or "% left", or keys.</dd></div>
+      <div class="two"><dt>Sent</dt><dd>A hashed job id, when it started (to the minute), the plan it went to as pool-1, pool-2, its type and provider (ChatGPT / Claude Personal / Claude Team when known), a short job title, model and effort when set on the plan, whether it ran, why it missed and the estimated saving.</dd></div>
+      <div class="two"><dt>Never sent</dt><dd>Prompts, code, commands, output, file names or paths, plan labels you typed, usage readings or "% left", or keys.</dd></div>
       <div class="two"><dt>Stop</dt><dd><code>allo-router disconnect</code> revokes the token and deletes that computer's history here. Your local dashboard keeps working either way.</dd></div>
     </dl>
   </section>`;
@@ -281,7 +337,7 @@ function render() {
   const lines = styleLines(data.lines);
   const body = data.computers.length === 0
     ? empty()
-    : (lines.length ? allocation(data, lines) + map(data, lines, now) : `<section class="empty"><h2>No jobs in this period</h2><p class="intro">Jobs show up here after <code>run --execute</code> finishes them on a connected computer.</p></section>`) +
+    : (lines.length ? allocation(data, lines) + chipToggle(data) + map(data, lines, now) : `<section class="empty"><h2>No jobs in this period</h2><p class="intro">Jobs show up here after <code>run --execute</code> finishes them on a connected computer.</p></section>`) +
       tables(data, lines) + computers(data);
   const note = `<p class="note"><b>Only job numbers, plans, outcomes and estimates reach this page.</b> Job names and everything else stay on your computer; open <code>allo-router dashboard</code> there to see them. Times are UTC.</p>`;
   document.getElementById("app").innerHTML = `${nav(data)}<div class="wrap">${note}${header(data, now)}${body}${about}
@@ -296,6 +352,9 @@ function render() {
   el.innerHTML = sp.left > 0 ? `Free for the first ${sp.limit} users: <b>${sp.left} of ${sp.limit}</b> free spots left` : `All ${sp.limit} free spots are taken`;
   el.hidden = false;
   document.getElementById("signout").onclick = signOut;
+  for (const b of document.querySelectorAll("[data-chip-mode]")) {
+    b.onclick = () => { chipMode = b.getAttribute("data-chip-mode"); render(); };
+  }
   document.getElementById("delete").onclick = async () => {
     if (!confirm("Delete your account? Every computer's token stops working and all your history here is deleted.")) return;
     await post("/v1/me/delete");

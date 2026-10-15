@@ -67,7 +67,7 @@ def write_folder(here, pool_id="acme-redlines", entries=None):
 
 
 def sample_entries(pool_id="acme-redlines"):
-    secret = {"task_name": f"Review {CANARY} contract", "output": f"runs/{CANARY}.log", "tier": "private",
+    secret = {"task_name": "Review client contract", "output": f"runs/{CANARY}.log", "tier": "private",
               "backend": "ShellBackend", "returncode": 0, "seconds": 12.5, "plan": "sha256:" + CANARY}
     return [
         {"at": "2099-01-03T03:00:27Z", "task_id": f"{CANARY}-1", "pool": pool_id, "status": "ok", "est_usd": 20,
@@ -102,7 +102,7 @@ def test_payload_holds_only_allowlisted_keys(tmp_path):
     for j in payload["jobs"]:
         assert set(j) == set(up.JOB_KEYS)
         assert set(up.JOB_KEYS) == {"id", "at", "pool", "plan_type", "provider", "status", "skip", "miss",
-                                    "est_saved_usd"}
+                                    "est_saved_usd", "title", "model", "effort"}
 
 
 def test_canary_never_leaves(tmp_path):
@@ -136,7 +136,7 @@ def test_values(tmp_path):
     assert len({j["id"] for j in payload["jobs"]}) == 5
     # pools are numbered in the order they are first seen; the typed ids never appear
     assert [j["pool"] for j in payload["jobs"]] == ["pool-1", "pool-2", "pool-3", None, "pool-1"]
-    assert (ok["plan_type"], ok["provider"]) == ("subscription", "claude")      # from the command's file name
+    assert (ok["plan_type"], ok["provider"]) == ("subscription", "claude_team")  # claude exe, no personal home
     assert (credit["plan_type"], credit["provider"]) == ("credit_usd", "api")
     assert (timeout["plan_type"], timeout["provider"]) == ("subscription", "codex")  # from its sync source
     assert (unassigned["plan_type"], unassigned["provider"]) == (None, None)
@@ -147,6 +147,8 @@ def test_values(tmp_path):
     assert timeout["miss"] == ["timeout", "unverified-reading"]
     assert unassigned["miss"] == ["unassigned"] and unassigned["skip"] == "unassigned"
     assert already["miss"] == [] and already["skip"] == "already-ran" and already["status"] == "skipped"
+    assert ok["title"] == "Review client contract"
+    assert timeout["provider"] == "codex" and timeout["model"] is None  # sync source only, no run command
 
 
 def test_pool_numbering_and_hashes_are_stable_once_connected(tmp_path):
@@ -211,6 +213,8 @@ def test_allowlist_matches_the_server(tmp_path):
     assert arr("MISSES") == list(up.MISSES)
     assert arr("PLAN_TYPES") == list(up.PLAN_TYPES)
     assert arr("PROVIDERS") == list(up.PROVIDERS)
+    assert arr("MODELS") == list(up.MODELS)
+    assert arr("EFFORTS") == list(up.EFFORTS)
     assert f"export const MAX_ROWS = {up.MAX_ROWS};" in js
 
 
@@ -413,3 +417,34 @@ def test_run_calls_after_job_for_every_logged_line(tmp_path):
     calls.clear()
     allo_exec.cmd_run(tmp_path, [], plan_now, out=lambda s: None, after_job=lambda: calls.append(1))
     assert calls == []
+
+
+def test_provider_personal_vs_team_and_title_model_effort(tmp_path):
+    cfg = {"tiers": ["public"], "pools": [
+        {"id": "personal", "kind": "subscription", "tiers": ["public"],
+         "sync": {"source": "claude", "home": "/Users/x/.claude-personal"},
+         "run": {"backend": "shell", "command": ["claude", "-p", "--model", "opus", "--effort", "high", "{prompt}"],
+                 "env": {"CLAUDE_CONFIG_DIR": "/Users/x/.claude-personal"}}},
+        {"id": "team", "kind": "subscription", "tiers": ["public"],
+         "sync": {"source": "claude"},
+         "run": {"backend": "shell", "command": ["claude", "-p", "--effort", "very_high", "{prompt}"]}},
+        {"id": "gpt", "kind": "subscription", "tiers": ["public"],
+         "sync": {"source": "codex"},
+         "run": {"backend": "shell", "command": ["codex", "exec", "{prompt}"]}},
+    ]}
+    (tmp_path / "pools.json").write_text(__import__("json").dumps(cfg))
+    (tmp_path / "tasks.json").write_text('{"tasks": []}')
+    entries = [
+        {"at": "2099-01-03T03:00:00Z", "task_id": 1, "task_name": "Industry pages", "pool": "personal",
+         "status": "ok", "pool_kind": "subscription", "pool_flags": [], "est_usd": 1},
+        {"at": "2099-01-03T03:01:00Z", "task_id": 2, "task_name": "Security audit", "pool": "team",
+         "status": "ok", "pool_kind": "subscription", "pool_flags": [], "est_usd": 1},
+        {"at": "2099-01-03T03:02:00Z", "task_id": 3, "task_name": "i18n", "pool": "gpt",
+         "status": "ok", "pool_kind": "subscription", "pool_flags": [], "est_usd": 1},
+    ]
+    (tmp_path / "runs.jsonl").write_text("".join(__import__("json").dumps(e) + "\n" for e in entries))
+    payload, _ = show(tmp_path)
+    a, b, c = payload["jobs"]
+    assert (a["provider"], a["title"], a["model"], a["effort"]) == ("claude_personal", "Industry pages", "opus", "high")
+    assert (b["provider"], b["title"], b["effort"]) == ("claude_team", "Security audit", "very_high")
+    assert (c["provider"], c["title"], c["model"]) == ("codex", "i18n", "gpt-5-codex")

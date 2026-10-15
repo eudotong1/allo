@@ -5,12 +5,14 @@
 export const SCHEMA = 1;
 export const MAX_ROWS = 500;
 export const TOP_KEYS = ["schema", "sent_at", "jobs"];
-export const JOB_KEYS = ["id", "at", "pool", "plan_type", "provider", "status", "skip", "miss", "est_saved_usd"];
+export const JOB_KEYS = ["id", "at", "pool", "plan_type", "provider", "status", "skip", "miss", "est_saved_usd", "title", "model", "effort"];
 export const STATUSES = ["ok", "failed", "timeout", "error", "skipped", "dry-run"];
 export const SKIPS = ["unassigned", "needs-reading", "already-ran", "bad-run-block", "missing-cwd", "declined", "manual", "other"];
 export const MISSES = ["failed", "timeout", "error", "unverified-reading", "unassigned", "needs-reading", "bad-run-block", "missing-cwd", "other"];
 export const PLAN_TYPES = ["subscription", "credit_usd", "other"];
-export const PROVIDERS = ["claude", "codex", "gemini", "api", "other"];
+export const PROVIDERS = ["claude", "claude_personal", "claude_team", "codex", "gemini", "api", "other"];
+export const MODELS = ["opus", "sonnet", "haiku", "gpt-5", "gpt-5-codex", "o3", "o4-mini", "other"];
+export const EFFORTS = ["low", "medium", "high", "very_high", "xhigh"];
 
 const MINUTE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}Z$/;
 const JOB_ID = /^h:[0-9a-f]{16}$/;
@@ -58,6 +60,10 @@ export function validatePayload(p) {
       return `jobs[${i}].miss is not allowed`;
     if (j.est_saved_usd !== null && (typeof j.est_saved_usd !== "number" || !Number.isFinite(j.est_saved_usd) || Math.abs(j.est_saved_usd) >= 1e7))
       return `jobs[${i}].est_saved_usd must be a number or null`;
+    if (j.title !== null && (typeof j.title !== "string" || j.title.length < 1 || j.title.length > 48 || /[<>]/.test(j.title) || ![...j.title].every((c) => c === " " || c === "-" || c === "_" || c === "." || c === "/" || c === ":" || c === "#" || (c >= "0" && c <= "9") || (c >= "A" && c <= "Z") || (c >= "a" && c <= "z"))))
+      return `jobs[${i}].title is not allowed`;
+    if (j.model !== null && !MODELS.includes(j.model)) return `jobs[${i}].model is not allowed`;
+    if (j.effort !== null && !EFFORTS.includes(j.effort)) return `jobs[${i}].effort is not allowed`;
   }
   return null;
 }

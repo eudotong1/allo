@@ -34,7 +34,7 @@ async function connectComputer(cookie, name = "Studio Mac") {
 function job(over = {}) {
   return {
     id: "h:0123456789abcdef", at: "2026-10-13T03:00Z", pool: "pool-1", plan_type: "subscription", provider: "codex",
-    status: "ok", skip: null, miss: [], est_saved_usd: 4.12, ...over,
+    status: "ok", skip: null, miss: [], est_saved_usd: 4.12, title: "Sample job", model: "gpt-5-codex", effort: "high", ...over,
   };
 }
 const payload = (jobs) => ({ schema: 1, sent_at: "2026-10-13T03:05Z", jobs });
@@ -92,14 +92,20 @@ describe("free spots and the waitlist", () => {
 });
 
 describe("upload allowlist", () => {
-  it("stores an allowlisted payload and ignores a re-upload", async () => {
+  it("stores an allowlisted payload and upserts on re-upload", async () => {
     const { cookie } = await devSignIn("alice");
     const token = await connectComputer(cookie);
     const r = await call("/v1/jobs", { method: "POST", token, body: payload([job()]), origin: null });
     expect(r.status).toBe(200);
     expect(await r.json()).toEqual({ received: 1, stored: 1 });
-    const again = await (await call("/v1/jobs", { method: "POST", token, body: payload([job()]), origin: null })).json();
-    expect(again).toEqual({ received: 1, stored: 0 });
+    const again = await (await call("/v1/jobs", { method: "POST", token,
+      body: payload([job({ provider: "claude_personal", title: "Industry pages", model: "opus", effort: "high" })]),
+      origin: null })).json();
+    expect(again.received).toBe(1);
+    expect(again.stored).toBeGreaterThanOrEqual(1);  // upsert updates the row
+    expect(await count("jobs")).toBe(1);
+    const row = await env.DB.prepare("SELECT provider, title, model, effort FROM jobs").first();
+    expect(row).toEqual({ provider: "claude_personal", title: "Industry pages", model: "opus", effort: "high" });
   });
 
   const bad = {

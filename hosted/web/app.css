@@ -186,3 +186,8 @@ button.link { font: inherit; color: inherit; background: none; border: 0; paddin
   nav { flex-wrap: wrap; }
   .code { font-size: 40px; }
 }
+
+.chip-modes { display: flex; gap: 10px; margin: 8px 0 0; align-items: center; }
+.chip-modes::before { content: "Chips:"; color: var(--muted); font-size: 14px; margin-right: 4px; }
+.chip-modes button.chip-mode { font: 500 14px/1 var(--sans); padding: 6px 12px; border: 1px solid var(--rule); background: var(--paper); color: var(--ink); border-radius: 999px; cursor: pointer; }
+.chip-modes button.chip-mode.on { border-color: var(--ink); background: var(--ink); color: var(--paper); }

@@ -33,6 +33,8 @@ export function summarize(rows, installs) {
       });
     }
     const line = lines.get(key);
+    if (r.provider && (line.provider === "other" || !line.provider)) line.provider = r.provider;
+    else if (r.provider && r.provider !== "claude" && line.provider === "claude") line.provider = r.provider;
     const ran = r.status === "ok";
     const missed = miss.length > 0;
     for (const t of [line, totals]) {
@@ -41,7 +43,10 @@ export function summarize(rows, installs) {
       if (missed) t.missed += 1;
       if (typeof r.est_saved_usd === "number") { t.saved += r.est_saved_usd; t.priced += 1; }
     }
-    jobs.push({ n: i + 1, at: r.at, line: key, status: r.status, miss, computer: names[r.install_id] || null });
+    jobs.push({
+      n: i + 1, at: r.at, line: key, status: r.status, miss, computer: names[r.install_id] || null,
+      title: r.title || null, model: r.model || null, effort: r.effort || null,
+    });
   });
   const round = (x) => Math.round(x * 100) / 100;
   const ordered = [...lines.values()]

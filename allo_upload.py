@@ -12,10 +12,12 @@ module that opens a network connection, and only for these commands, or after `r
 
 What an upload carries, per job: a hashed id, when it started (rounded to the minute), which pool took it (as
 pool-1, pool-2...; the pool ids you typed never leave), the plan type (subscription / credit_usd), the provider
-(claude / codex / gemini / api / other), the outcome, why it missed, and the estimated saving in USD.
-It never carries task names, prompts, commands, code, output, file names or paths, readings ("% left"),
-token counts, labels, hostnames or keys. The payload is built field by field from an allowlist, and checked
-against it again before sending; the server rejects anything else.
+(claude / claude_personal / claude_team / codex / gemini / api / other), a short job title (from the task name,
+max 48 chars), the model and effort when those are set on the pool's run command, the outcome, why it missed,
+and the estimated saving in USD.
+It never carries prompts, commands, code, output, file names or paths, readings ("% left"), token counts,
+pool labels, hostnames or keys. The payload is built field by field from an allowlist, and checked against it
+again before sending; the server rejects anything else.
 
 Once connected, `run --execute` uploads after jobs finish, at most once every 15 seconds, and once more at the
 end. A failed upload never fails the run; the lines go on the next one. Every upload is logged in connect.log.
@@ -46,13 +48,17 @@ DEBOUNCE_S = 15
 
 # The allowlist. The server holds the same lists (hosted/worker/src/schema.js) and rejects anything else.
 TOP_KEYS = ("schema", "sent_at", "jobs")
-JOB_KEYS = ("id", "at", "pool", "plan_type", "provider", "status", "skip", "miss", "est_saved_usd")
+JOB_KEYS = ("id", "at", "pool", "plan_type", "provider", "status", "skip", "miss", "est_saved_usd",
+            "title", "model", "effort")
 STATUSES = ("ok", "failed", "timeout", "error", "skipped", "dry-run")
 SKIPS = ("unassigned", "needs-reading", "already-ran", "bad-run-block", "missing-cwd", "declined", "manual", "other")
 MISSES = ("failed", "timeout", "error", "unverified-reading", "unassigned", "needs-reading", "bad-run-block",
           "missing-cwd", "other")
 PLAN_TYPES = ("subscription", "credit_usd", "other")
-PROVIDERS = ("claude", "codex", "gemini", "api", "other")
+PROVIDERS = ("claude", "claude_personal", "claude_team", "codex", "gemini", "api", "other")
+MODELS = ("opus", "sonnet", "haiku", "gpt-5", "gpt-5-codex", "o3", "o4-mini", "other")
+EFFORTS = ("low", "medium", "high", "very_high", "xhigh")
+TITLE_OK = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 ._\-/:#]{0,47}$")
 MINUTE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}Z$")
 JOB_ID = re.compile(r"^h:[0-9a-f]{16}$")
 POOL_REF = re.compile(r"^pool-[0-9]{1,3}$")
@@ -130,20 +136,94 @@ def plan_type(kind):
     return kind if kind in ("subscription", "credit_usd") else "other"
 
 
+def _run_exe(pool_cfg):
+    cmd = (pool_cfg.get("run") or {}).get("command") if isinstance(pool_cfg.get("run"), dict) else None
+    if isinstance(cmd, list) and cmd and isinstance(cmd[0], str):
+        return os.path.basename(cmd[0]).lower()
+    return None
+
+
+def _personal_home(pool_cfg):
+    """True when this Claude pool uses a personal config dir (never reads the label)."""
+    sync = pool_cfg.get("sync") if isinstance(pool_cfg.get("sync"), dict) else {}
+    run = pool_cfg.get("run") if isinstance(pool_cfg.get("run"), dict) else {}
+    env = run.get("env") if isinstance(run.get("env"), dict) else {}
+    home = f"{sync.get('home') or ''} {env.get('CLAUDE_CONFIG_DIR') or ''}".lower()
+    return "personal" in home
+
+
+def _cmd_tokens(pool_cfg):
+    cmd = (pool_cfg.get("run") or {}).get("command") if isinstance(pool_cfg.get("run"), dict) else None
+    return [str(x).lower() for x in cmd] if isinstance(cmd, list) else []
+
+
 def provider(pool_cfg, kind):
     """An enum read off the pool's config, never its id or label."""
     if kind == "credit_usd":
         return "api"
-    source = (pool_cfg.get("sync") or {}).get("source") if isinstance(pool_cfg.get("sync"), dict) else None
-    if source in ("claude", "codex"):
-        return source
-    cmd = (pool_cfg.get("run") or {}).get("command") if isinstance(pool_cfg.get("run"), dict) else None
-    if isinstance(cmd, list) and cmd and isinstance(cmd[0], str):
-        exe = os.path.basename(cmd[0]).lower()
-        for name in ("claude", "codex", "gemini"):
-            if exe == name or exe.startswith(name + "-"):
-                return name
+    sync = pool_cfg.get("sync") if isinstance(pool_cfg.get("sync"), dict) else {}
+    source = sync.get("source")
+    exe = _run_exe(pool_cfg)
+    is_claude = source == "claude" or (exe and (exe == "claude" or exe.startswith("claude-")))
+    is_codex = source == "codex" or (exe and (exe == "codex" or exe.startswith("codex-")))
+    is_gemini = exe and (exe == "gemini" or exe.startswith("gemini-"))
+    if is_claude:
+        return "claude_personal" if _personal_home(pool_cfg) else "claude_team"
+    if is_codex:
+        return "codex"
+    if is_gemini:
+        return "gemini"
     return "other"
+
+
+def short_title(name):
+    """First line of the task name, allowlisted chars, max 48. None when empty or not allowed."""
+    if not isinstance(name, str):
+        return None
+    line = name.strip().split("\n", 1)[0].strip()
+    if not line or not TITLE_OK.match(line):
+        # Soften: drop disallowed chars and retry
+        cleaned = "".join(c for c in line if c.isalnum() or c in " ._-/:#")
+        cleaned = cleaned.strip(" ._-/:#")
+        if not cleaned or not TITLE_OK.match(cleaned[:48]):
+            return None
+        line = cleaned
+    return line[:48]
+
+
+def model_and_effort(pool_cfg):
+    """Model and effort flags from the pool's run command only (never from prompts)."""
+    toks = _cmd_tokens(pool_cfg)
+    model = effort = None
+    for i, t in enumerate(toks):
+        if t in ("--model", "-m") and i + 1 < len(toks):
+            cand = toks[i + 1].replace("_", "-")
+            if cand in MODELS:
+                model = cand
+            elif cand.startswith("gpt-5"):
+                model = "gpt-5-codex" if "codex" in cand else "gpt-5"
+            elif "opus" in cand:
+                model = "opus"
+            elif "sonnet" in cand:
+                model = "sonnet"
+            elif "haiku" in cand:
+                model = "haiku"
+            else:
+                model = "other"
+        if t in ("--effort",) and i + 1 < len(toks):
+            cand = toks[i + 1].replace("-", "_")
+            if cand in EFFORTS:
+                effort = cand
+        if t.startswith("model_reasoning_effort="):
+            cand = t.split("=", 1)[1].replace("-", "_")
+            if cand in EFFORTS:
+                effort = cand
+        if "model_reasoning_effort" in t and i + 1 < len(toks) and toks[i + 1] in EFFORTS:
+            effort = toks[i + 1]
+    # Codex default when the exe is codex and no model flag
+    if model is None and (_run_exe(pool_cfg) or "").startswith("codex"):
+        model = "gpt-5-codex"
+    return model, effort
 
 
 def job_id(salt, e):
@@ -185,6 +265,7 @@ def build_payload(entries, cfg, salt, pools, now, est_now=None):
         skip = None
         if status == "skipped":
             skip = e.get("skip_kind") if e.get("skip_kind") in SKIPS else "other"
+        model, effort = model_and_effort(pcfg) if pid is not None else (None, None)
         jobs.append({
             "id": job_id(salt, e),
             "at": minute(e["_at"]),
@@ -195,6 +276,9 @@ def build_payload(entries, cfg, salt, pools, now, est_now=None):
             "skip": skip,
             "miss": misses(e),
             "est_saved_usd": saved,
+            "title": short_title(e.get("task_name")),
+            "model": model,
+            "effort": effort,
         })
     payload = {"schema": SCHEMA, "sent_at": minute(now), "jobs": jobs}
     check_payload(payload)
@@ -219,7 +303,9 @@ def check_payload(payload):
               and j["status"] in STATUSES and j["skip"] in SKIPS + (None,)
               and isinstance(j["miss"], list) and all(m in MISSES for m in j["miss"])
               and (j["est_saved_usd"] is None or (isinstance(j["est_saved_usd"], (int, float))
-                                                  and not isinstance(j["est_saved_usd"], bool))))
+                                                  and not isinstance(j["est_saved_usd"], bool)))
+              and (j["title"] is None or (isinstance(j["title"], str) and TITLE_OK.match(j["title"])))
+              and j["model"] in MODELS + (None,) and j["effort"] in EFFORTS + (None,))
         if not ok:
             raise UploadError(f"job {j.get('id')!r} has a value outside the allowlist")
 
