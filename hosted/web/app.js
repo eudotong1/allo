@@ -69,7 +69,7 @@ function chipLabel(j) {
   if (chipMode === "effort" && j.effort) return j.effort.replace("_", " ");
   if (j.title) {
     const t = j.title.length > 18 ? j.title.slice(0, 16) + "…" : j.title;
-    return t;
+    return j.runs > 1 ? `${t} ×${j.runs}` : t;
   }
   return `#${j.n}`;
 }
@@ -161,10 +161,10 @@ function header(d, now) {
   return `<header class="head">
     <div>
       <p class="scope">${scope}, from ${plural(d.computers.length, "computer")}</p>
-      <h1 class="cond">${plural(t.jobs, "job")} allocated<br>across ${plural(plans, "plan")}</h1>
+      <h1 class="cond">${plural(t.jobs, "task")} allocated<br>across ${plural(plans, "plan")}</h1>
       <p class="sub"><b>Allo</b>cate usage across your plans based on how much of each limit remains.</p>
       <div class="stats">
-        <div><b class="cond">${t.jobs}</b>jobs</div>
+        <div><b class="cond">${t.jobs}</b>tasks</div><div><b class="cond">${t.runs ?? t.jobs}</b>runs</div>
         <div><b class="cond">${t.ran}</b>ran</div>
         <div class="${t.missed ? "miss" : ""}"><b class="cond">${t.missed}</b>missed</div>
       </div>
@@ -252,7 +252,7 @@ function map(d, lines, now) {
   lines.forEach((l, i) => {
     const y = ys[i];
     const red = l.pool ? "" : ` style="fill:var(--reset-text)"`;
-    const counts = `${plural(l.jobs, "job")}${l.missed && l.pool ? `, ${l.missed} missed` : ""}`;
+    const counts = `${plural(l.jobs, "task")}${l.runs > l.jobs ? ` · ${plural(l.runs, "run")}` : ""}${l.missed && l.pool ? `, ${l.missed} missed` : ""}`;
     s += `<text x="262" y="${y - 24}" class="t-name"${red}>${esc(l.name)}<tspan class="t-num" dx="12"${red}>${counts}</tspan></text>`;
     const share = Math.round((l.jobs / (d.totals.jobs || 1)) * 100);
     s += `<text x="1308" y="${y + 6}" text-anchor="end" class="t-share"${red}>${share}%</text>`;
@@ -269,7 +269,7 @@ function map(d, lines, now) {
       const missed = j.miss && j.miss.length > 0;
       const isRun = j.status === "running";
       const fill = isRun ? (l.color || "var(--ink)") : chipFill(j, l.color);
-      const tip = [`#${j.n}`, j.title, j.model, j.effort ? `effort ${j.effort.replace("_", " ")}` : null, j.status,
+      const tip = [`#${j.n}`, j.title, j.runs > 1 ? `${j.runs} runs` : null, j.model, j.effort ? `effort ${j.effort.replace("_", " ")}` : null, j.status,
         isRun && j.seconds != null ? fmtElapsed(j.seconds) : null,
         missed ? j.miss.map((m) => WHY[m] || m).join(", ") : null].filter(Boolean).join(" · ");
       const fillAttr = (!missed && fill) ? ` style="fill:${fill}"` : "";
