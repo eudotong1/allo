@@ -55,6 +55,7 @@ function styleLines(lines) {
   let extra = 0;
   return lines.map((l) => {
     if (!l.pool) return { ...l, color: "var(--none)", name: "No plan took it", short: "no plan" };
+    if (l.direct) return { ...l, color: COLORS.grok, name: "Grok Bot \u00b7 direct (not routed)", short: "Grok Bot, direct (not routed)" };
     const p = l.provider || "other";
     const colorKey = p === "codex" ? "chatgpt" : p;
     const color = used[colorKey] ? EXTRA[extra++ % EXTRA.length] : COLORS[colorKey] || COLORS.other;
@@ -180,11 +181,11 @@ function header(d, now) {
 function allocation(d, lines) {
   const total = d.totals.jobs || 1;
   const bar = lines.map((l) => {
-    const pct = (l.jobs / total) * 100;
+    const pct = l.share ?? (l.jobs / total) * 100;
     return `<span class="${l.pool ? "" : "alloc-none"}" style="width:${pct.toFixed(2)}%;background:${l.color}" title="${esc(l.name)}: ${l.jobs} of ${d.totals.jobs}"></span>`;
   }).join("");
   const keys = lines.map((l) => {
-    const pct = Math.round((l.jobs / total) * 100);
+    const pct = l.share ?? Math.round((l.jobs / total) * 100);
     const meta = l.pool
       ? `${plural(l.jobs, "job")} \u00b7 ${pct}%` + (l.priced ? ` \u00b7 ${money(l.saved)} API value` : " \u00b7 API value n/a")
       : `${plural(l.jobs, "job")} \u00b7 ${pct}% \u00b7 missed, no plan fit`;
@@ -257,7 +258,7 @@ function map(d, lines, now) {
     const red = l.pool ? "" : ` style="fill:var(--reset-text)"`;
     const counts = `${plural(l.jobs, "task")}${l.runs > l.jobs ? ` · ${plural(l.runs, "run")}` : ""}${l.missed && l.pool ? `, ${l.missed} missed` : ""}`;
     s += `<text x="262" y="${y - 24}" class="t-name"${red}>${esc(l.name)}<tspan class="t-num" dx="12"${red}>${counts}</tspan></text>`;
-    const share = Math.round((l.jobs / (d.totals.jobs || 1)) * 100);
+    const share = l.share ?? Math.round((l.jobs / (d.totals.jobs || 1)) * 100);
     s += `<text x="1308" y="${y + 6}" text-anchor="end" class="t-share"${red}>${share}%</text>`;
     const cap = l.pool ? (l.priced ? `${money(l.saved)} API value (est.)` : "API value n/a") : "missed, no plan fit";
     s += `<text x="1308" y="${y + 26}" text-anchor="end" class="t-est">${cap}</text>`;
@@ -272,7 +273,7 @@ function map(d, lines, now) {
       const missed = j.miss && j.miss.length > 0;
       const isRun = j.status === "running";
       const fill = isRun ? (l.color || "var(--ink)") : chipFill(j, l.color);
-      const tip = [`#${j.n}`, j.title, j.runs > 1 ? `${j.runs} runs` : null, j.model, j.effort ? `effort ${j.effort.replace("_", " ")}` : null, j.status,
+      const tip = [`#${j.n}`, j.title, j.dispatched_by ? `sent by ${PROVIDER[j.dispatched_by] || j.dispatched_by}` : null, j.runs > 1 ? `${j.runs} runs` : null, j.model, j.effort ? `effort ${j.effort.replace("_", " ")}` : null, j.status,
         isRun && j.seconds != null ? fmtElapsed(j.seconds) : null,
         missed ? j.miss.map((m) => WHY[m] || m).join(", ") : null].filter(Boolean).join(" · ");
       const fillAttr = (!missed && fill) ? ` style="fill:${fill}"` : "";
@@ -309,7 +310,7 @@ function tables(d, lines) {
   return `<section class="part">
     <div>
       <h2>Where jobs went</h2>
-      <p class="intro">Totals for ${period} by plan. API value (est.) is what the work would have cost at public API list prices, computed only from token usage or cost the tool itself reported; anything else shows n/a. Grok Bot rows mirror work on another plan and are not priced. Plans show as ChatGPT, Claude Personal or Claude Team when the upload can tell them apart; otherwise as pool-N.</p>
+      <p class="intro">Totals for ${period} by plan. API value (est.) is what the work would have cost at public API list prices, computed only from token usage or cost the tool itself reported; anything else shows n/a. A job Grok Bot sent to another plan counts once, on the plan that ran it. Work Grok Bot did itself shows as Grok Bot, direct (not routed). Plans show as ChatGPT, Claude Personal or Claude Team when the upload can tell them apart; otherwise as pool-N.</p>
     </div>
     <div>
       <div class="tbl" role="table" aria-label="Jobs by plan">
