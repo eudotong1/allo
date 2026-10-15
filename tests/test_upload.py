@@ -121,7 +121,8 @@ def test_no_percent_left_or_reading_field(tmp_path):
     keys = set(payload) | {k for j in payload["jobs"] for k in j}
     for bad in ("pct", "left", "remaining", "reading", "used", "token", "name", "label", "prompt", "path", "cwd"):
         assert not any(bad in k for k in keys), bad
-    assert "42" not in json.dumps(payload)  # remaining_pct in pools.json
+    # remaining_pct in pools.json is 42. Ids are random-salted hex and may contain "42", so they are left out.
+    assert "42" not in json.dumps([{k: v for k, v in j.items() if k != "id"} for j in payload["jobs"]])
 
 
 def test_values(tmp_path):
