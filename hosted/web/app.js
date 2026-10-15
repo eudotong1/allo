@@ -283,14 +283,15 @@ function map(d, lines, now) {
     if (hidden) s += `<text x="${X1 - 4}" y="${y + 26}" text-anchor="end" class="more"><a href="#jobs">+${hidden} more, see all jobs below ↓</a></text>`;
   });
   s += `</svg>`;
-  const planKeys = lines.filter((l) => l.pool).map((l) => `<span><svg width="28" height="14"><rect width="28" height="14" rx="2" fill="${l.color}"/></svg>${esc(l.short)}</span>`).join("");
+  const stripe = (ls) => { const c = ls.filter((l) => l.pool).map((l) => l.color); const w = 38 / (c.length || 1); return `<svg width="38" height="12" aria-hidden="true">${c.map((col, i) => `<rect x="${(i * w).toFixed(1)}" y="3" width="${w.toFixed(1)}" height="6" fill="${col}"/>`).join("")}</svg>`; };
+  const scale = d.range.key === "30d" ? "period" : "week";
   return `<div class="map">${s}</div>
-  <div class="legend" aria-hidden="true">
-    <span><b>Color = the plan that ran the job:</b></span>
-    ${planKeys}
-    <span><svg width="34" height="18"><rect x="1" y="1" width="32" height="16" fill="var(--paper)" stroke="var(--reset-text)" stroke-width="1.5" stroke-dasharray="4 3"/></svg>Job missed</span>
-    ${live ? `<span><svg width="28" height="10"><rect y="3" width="28" height="4" fill="var(--rule)"/></svg>Rest of the ${d.range.key === "30d" ? "period" : "week"}</span>` : ""}
-    <span>Jobs that start close together sit in queue order, not to time scale.</span>
+  <div class="legend" aria-label="How to read the map">
+    <span class="lg-title">How to read it</span>
+    <span class="lg">${stripe(lines)}<span><b>Each line is a plan.</b> Its color matches the plan above.</span></span>
+    <span class="lg"><svg width="38" height="18" aria-hidden="true"><rect width="38" height="18" rx="2" fill="var(--ink)"/><text x="19" y="13" text-anchor="middle" style="fill:var(--paper);font-size:10px;font-weight:700">Docs</text></svg><span><b>Each box is a task</b> that plan did.</span></span>
+    <span class="lg"><svg width="38" height="18" aria-hidden="true"><rect x="1" y="1" width="36" height="16" rx="2" fill="var(--paper)" stroke="var(--reset-text)" stroke-width="1.5" stroke-dasharray="4 3"/></svg><span><b>Dashed red</b> = missed, no plan had room.</span></span>
+    ${live ? `<span class="lg"><svg width="38" height="12" aria-hidden="true"><rect y="4" width="38" height="4" fill="var(--rule)"/></svg><span><b>Gray</b> = rest of the ${scale}.</span></span>` : ""}
   </div>`;
 }
 
@@ -310,7 +311,7 @@ function tables(d, lines) {
   return `<section class="part">
     <div>
       <h2>Where jobs went</h2>
-      <p class="intro">Totals for ${period} by plan. API value (est.) is what the work would have cost at public API list prices, computed only from token usage or cost the tool itself reported; anything else shows n/a. A job Grok Bot sent to another plan counts once, on the plan that ran it. Work Grok Bot did itself shows as Grok Bot, direct (not routed). Plans show as ChatGPT, Claude Personal or Claude Team when the upload can tell them apart; otherwise as pool-N.</p>
+      <p class="intro">Totals for ${period} by plan. API value (est.) is what the work would have cost at public API list prices, computed only from token usage or cost the tool itself reported; anything else shows n/a. Every task counts once, under the plan that did it. Grok Bot\u2019s own work, done without routing, has its own row. Plans show as ChatGPT, Claude Personal or Claude Team when the upload can tell them apart; otherwise as pool-N.</p>
     </div>
     <div>
       <div class="tbl" role="table" aria-label="Jobs by plan">
@@ -326,7 +327,7 @@ function tables(d, lines) {
 function computers(d) {
   const rows = d.computers.map((c) => {
     const up = c.last_upload_at ? (() => { const a = new Date(c.last_upload_at); return `Last upload ${mdy(a)} at ${hhmm(a)}.`; })() : "No upload yet.";
-    return `<div><dt>${esc(c.name)}</dt><dd>Connected ${mdy(new Date(c.connected_at))}. ${up} ${plural(c.jobs, "job")} in this period.</dd>` +
+    return `<div><dt>${esc(c.name)}</dt><dd>${c.connected_at ? `Connected ${mdy(new Date(c.connected_at))}.` : ""} ${up} ${plural(c.jobs, "job")} in this period.</dd>` +
       `<button class="link act" data-disconnect="${c.id}" data-name="${esc(c.name)}">Disconnect</button></div>`;
   }).join("");
   return `<section class="part">
