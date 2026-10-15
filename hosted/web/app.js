@@ -150,13 +150,13 @@ function header(d, now) {
   let aside;
   if (t.priced) {
     aside = `<div class="big cond">${money(t.saved)}</div>
-      <p><b>Estimated saving ${whenSaved}.</b> Every job priced at API rates, minus its price on the plan that ran it.</p>
+      <p><b>API value (est.) ${whenSaved}.</b> What the work would have cost at public API list prices, from real reported token usage or cost. ${t.priced} of ${t.runs ?? t.jobs} runs had usage; the rest show n/a.</p>
       <p class="m">${uploads}</p>`;
   } else {
     const big = comps.length ? hhmm(new Date(comps[0].last_upload_at)) : "--:--";
     aside = `<div class="big cond">${big}</div>
       <p><b>${comps.length ? `Last upload from ${esc(comps[0].name)}.` : "No upload yet."}</b></p>
-      <p class="m">No saving estimate yet: none of these jobs had a price.</p>`;
+      <p class="m">API value n/a: no run reported real token usage or cost yet.</p>`;
   }
   return `<header class="head">
     <div>
@@ -183,7 +183,7 @@ function allocation(d, lines) {
   const keys = lines.map((l) => {
     const pct = Math.round((l.jobs / total) * 100);
     const meta = l.pool
-      ? `${plural(l.jobs, "job")} \u00b7 ${pct}%` + (l.priced ? ` \u00b7 ${money(l.saved)} saved` : (l.plan_type === "credit_usd" ? " \u00b7 API price" : ""))
+      ? `${plural(l.jobs, "job")} \u00b7 ${pct}%` + (l.priced ? ` \u00b7 ${money(l.saved)} API value` : " \u00b7 API value n/a")
       : `${plural(l.jobs, "job")} \u00b7 ${pct}% \u00b7 missed, no plan fit`;
     return `<div><span class="sw" style="background:${l.color}"></span><b${l.pool ? "" : ' class="no"'}>${esc(l.name)}</b><span class="meta">${meta}</span></div>`;
   }).join("");
@@ -256,7 +256,7 @@ function map(d, lines, now) {
     s += `<text x="262" y="${y - 24}" class="t-name"${red}>${esc(l.name)}<tspan class="t-num" dx="12"${red}>${counts}</tspan></text>`;
     const share = Math.round((l.jobs / (d.totals.jobs || 1)) * 100);
     s += `<text x="1308" y="${y + 6}" text-anchor="end" class="t-share"${red}>${share}%</text>`;
-    const cap = l.pool ? (l.priced ? `${money(l.saved)} saved` : (l.plan_type === "credit_usd" ? "API price" : "no estimate")) : "missed, no plan fit";
+    const cap = l.pool ? (l.priced ? `${money(l.saved)} API value (est.)` : "API value n/a") : "missed, no plan fit";
     s += `<text x="1308" y="${y + 26}" text-anchor="end" class="t-est">${cap}</text>`;
     let prevEnd = X0;
     let hidden = 0;
@@ -306,11 +306,11 @@ function tables(d, lines) {
   return `<section class="part">
     <div>
       <h2>Where jobs went</h2>
-      <p class="intro">Totals for ${period} by plan. The saving is an estimate: each job priced at API rates, minus its price on the plan that ran it. A subscription job counts as $0. Plans show as ChatGPT, Claude Personal or Claude Team when the upload can tell them apart; otherwise as pool-N.</p>
+      <p class="intro">Totals for ${period} by plan. API value (est.) is what the work would have cost at public API list prices, computed only from token usage or cost the tool itself reported; anything else shows n/a. Grok Bot rows mirror work on another plan and are not priced. Plans show as ChatGPT, Claude Personal or Claude Team when the upload can tell them apart; otherwise as pool-N.</p>
     </div>
     <div>
       <div class="tbl" role="table" aria-label="Jobs by plan">
-        <div class="h" role="row"><span></span><span>Plan</span><span class="r">Jobs</span><span class="r">Ran</span><span class="r">Missed</span><span class="r">Saved, estimate</span></div>
+        <div class="h" role="row"><span></span><span>Plan</span><span class="r">Jobs</span><span class="r">Ran</span><span class="r">Missed</span><span class="r">API value (est.)</span></div>
         ${rows}
         <div role="row" class="tot"><span></span><span>Total</span><span class="r">${t.jobs}</span><span class="r">${t.ran}</span><span class="r${t.missed ? " no" : ""}">${t.missed}</span><span class="r">${t.priced ? money(t.saved) : "n/a"}</span></div>
       </div>
@@ -351,7 +351,7 @@ const about = `<section class="part">
       <p class="intro">The same list is on the <a href="/privacy">privacy page</a> and in <code>allo-router connect --show</code>, which prints the next upload without sending it.</p>
     </div>
     <dl class="rows">
-      <div class="two"><dt>Sent</dt><dd>A hashed job id, when it started (to the minute), the plan it went to as pool-1, pool-2, its type and provider (ChatGPT / Claude Personal / Claude Team when known), a short job title, model and effort when set on the plan, whether it ran, why it missed and the estimated saving.</dd></div>
+      <div class="two"><dt>Sent</dt><dd>A hashed job id, when it started (to the minute), the plan it went to as pool-1, pool-2, its type and provider (ChatGPT / Claude Personal / Claude Team when known), a short job title, model and effort when set on the plan, whether it ran, why it missed and the API value (est.).</dd></div>
       <div class="two"><dt>Never sent</dt><dd>Prompts, code, commands, output, file names or paths, plan labels you typed, usage readings or "% left", or keys.</dd></div>
       <div class="two"><dt>Stop</dt><dd><code>allo-router disconnect</code> revokes the token and deletes that computer's history here. Your local dashboard keeps working either way.</dd></div>
     </dl>
