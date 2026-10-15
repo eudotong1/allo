@@ -224,15 +224,19 @@ def build_live_jobs(state, now: datetime, router_dirs: list[Path], *, backfill: 
             continue
         pool_id = data.get("pool") or "unknown"
         provider, plan = "other", "subscription"
+        known = False
         try:
             cfg = json.loads((here / "pools.json").read_text())
             for pcfg in cfg.get("pools") or []:
                 if pcfg.get("id") == pool_id:
                     provider = up.provider(pcfg, pcfg.get("kind") or "subscription")
                     plan = up.plan_type(pcfg.get("kind") or "subscription")
+                    known = True
                     break
         except (OSError, ValueError):
             pass
+        if not known:
+            continue  # pool not in this folder's pools.json (e.g. a test fixture marker): not real work
         started = allo.parse(data["at"]) if data.get("at") else now
         jobs.append(job_row(
             id=hid(salt, ["allo-current", data.get("task_id"), data.get("at"), pool_id]),

@@ -208,9 +208,9 @@ describe("dashboard", () => {
     expect(r.status).toBe(200);
     const d = await r.json();
     expect(d.login).toBe("alice");
-    expect(d.totals).toEqual({ jobs: 4, ran: 2, missed: 2, saved: 5.12, priced: 3, running: 0 });
-    expect(d.lines.map((l) => [l.pool, l.jobs, l.missed])).toEqual([["pool-1", 2, 1], ["pool-2", 1, 0], [null, 1, 1]]);
-    expect(d.computers).toMatchObject([{ name: "computer-1", jobs: 4 }]);
+    expect(d.totals).toEqual({ jobs: 3, runs: 4, ran: 2, missed: 2, saved: 5.12, priced: 3, running: 0 });
+    expect(d.lines.map((l) => [l.pool, l.jobs, l.missed])).toEqual([["pool-1", 1, 1], ["pool-2", 1, 0], [null, 1, 1]]);
+    expect(d.computers).toMatchObject([{ name: "computer-1", jobs: 3 }]);
     expect(d.spots.left).toBe(99);
 
     const etag = r.headers.get("ETag");
@@ -219,7 +219,7 @@ describe("dashboard", () => {
     await call("/v1/jobs", { method: "POST", token, body: payload([job({ id: "h:0000000000000009", at })]), origin: null });
     const changed = await call("/v1/me/dashboard?range=week", { cookie, headers: { "If-None-Match": etag } });
     expect(changed.status).toBe(200);
-    expect((await changed.json()).totals.jobs).toBe(5);
+    expect((await changed.json()).totals.runs).toBe(5);
   });
 
   it("shows each user only their own data", async () => {
@@ -336,5 +336,22 @@ describe("summarize", () => {
       names.push((await r.json()).computer);
     }
     expect(names).toEqual(["computer-1", "computer-2"]);
+  });
+});
+
+import { summarize } from "../src/dashboard.js";
+describe("collapse", () => {
+  it("folds repeat runs into one task, hides Say hi, and does not double count Grok dispatch", () => {
+    const base = { install_id: 1, status: "ok", miss: "[]", est_saved_usd: 0, at: "2026-10-15T05:00Z" };
+    const rows = [
+      ...[1, 2, 3].map((i) => ({ ...base, id: `c${i}`, pool: "pool-3", provider: "codex", plan_type: "subscription", title: "E2E tests", at: `2026-10-15T05:0${i}Z` })),
+      ...[1, 2, 3].map((i) => ({ ...base, id: `g${i}`, pool: "pool-4", provider: "grok", plan_type: "orchestrator", title: "Dispatch E2E tests", at: `2026-10-15T05:0${i}Z` })),
+      { ...base, id: "s1", pool: "pool-5", provider: "other", plan_type: "subscription", title: "Say hi" },
+    ];
+    const d = summarize(rows, [{ id: 1, name: "c" }], new Date("2026-10-15T06:00:00Z"));
+    expect(d.totals.jobs).toBe(1);
+    expect(d.totals.runs).toBe(3);
+    expect(d.lines.map((l) => l.pool)).toEqual(["pool-3", "pool-4"]);
+    expect(d.jobs.map((j) => [j.title, j.runs])).toEqual([["E2E tests", 3], ["Dispatch E2E tests", 3]]);
   });
 });
