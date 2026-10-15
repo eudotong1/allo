@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Allo Router: your week (mockup)</title>
+<style>
+  /* Fonts: ../fonts/ when this file sits in the repo's docs/hosted/, fonts/ next to it otherwise. */
+  @font-face { font-family: "Archivo"; src: url(../fonts/archivo-latin-var.woff2) format("woff2"), url(fonts/archivo-latin-var.woff2) format("woff2"); font-weight: 100 900; font-stretch: 62% 125%; font-display: swap; }
+  @font-face { font-family: "JetBrains Mono"; src: url(../fonts/jetbrains-mono-latin-var.woff2) format("woff2"), url(fonts/jetbrains-mono-latin-var.woff2) format("woff2"); font-weight: 100 800; font-display: swap; }
+  :root {
+    --paper: #E4E9E3;
+    --ink: #0E1D18;
+    --muted: #4F5E57;
+    --rule: #BCC6BE;
+    --codex: #2446D6;
+    --claude: #E39B0B;
+    --credit: #9A2C7C;
+    --none: #9AA59F;
+    --stop: #D3261A;
+    --reset-text: #B3200F;
+    --sans: "Archivo", "Arial Narrow", ui-sans-serif, system-ui, sans-serif;
+    --mono: "JetBrains Mono", ui-monospace, Menlo, monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--paper); color: var(--ink); }
+  body { font: 400 17px/1.55 var(--sans); font-variant-numeric: tabular-nums; }
+  a { color: inherit; text-underline-offset: 3px; }
+  code { font-family: var(--mono); font-size: 0.86em; }
+  .wrap { max-width: 1440px; margin: 0 auto; padding: 0 64px; }
+
+  nav { display: flex; align-items: baseline; gap: 12px 34px; padding: 26px 0 18px; border-bottom: 1px solid var(--rule); }
+  .mark { font-stretch: 125%; font-weight: 800; font-size: 21px; letter-spacing: -0.01em; text-decoration: none; }
+  nav .ex { color: var(--reset-text); font-weight: 600; font-size: 16px; }
+  nav .periods { margin-left: 24px; display: flex; gap: 22px; font-size: 16px; color: var(--muted); }
+  nav .periods a { text-decoration: none; }
+  nav .periods b { color: var(--ink); text-decoration: underline; text-underline-offset: 6px; text-decoration-thickness: 2px; }
+  nav .who { margin-left: auto; font-size: 15px; color: var(--muted); }
+  nav .who b { color: var(--ink); font-weight: 600; }
+  nav .who a { margin-left: 18px; }
+  .note { margin: 0; padding: 12px 0; border-bottom: 1px solid var(--rule); font-size: 15px; }
+  .note span { color: var(--muted); }
+
+  .head { display: grid; grid-template-columns: minmax(0, 1fr) 400px; gap: 48px; padding: 30px 0 28px; border-bottom: 1px solid var(--rule); }
+  h1 { margin: 0; font-stretch: 62%; font-weight: 820; font-size: 84px; line-height: 0.9; letter-spacing: -0.012em; }
+  h1 .miss { color: var(--reset-text); }
+  .head .sub { margin: 16px 0 0; font-size: 20px; max-width: 34em; }
+  .head .sub b { font-weight: 700; }
+  .head .fine { margin: 8px 0 0; font-size: 15px; color: var(--muted); max-width: 44em; }
+  .side { border-left: 1px solid var(--rule); padding-left: 40px; }
+  .side .big { font-stretch: 62%; font-weight: 800; font-size: 56px; line-height: 0.95; }
+  .side p { margin: 8px 0 0; font-size: 16px; }
+  .side .m { color: var(--muted); font-size: 15px; }
+
+  .map { padding: 18px 0 6px; }
+  .map svg { display: block; width: 100%; height: auto; overflow: visible; }
+  .map text { font-family: var(--sans); }
+  .t-name { font-size: 18px; font-weight: 700; fill: var(--ink); }
+  .t-num { font-size: 17px; font-weight: 500; fill: var(--ink); }
+  .t-saved { font-size: 16px; font-weight: 700; fill: var(--ink); }
+  .t-est { font-size: 14px; font-weight: 400; fill: var(--muted); }
+  .t-in { font-size: 14px; fill: var(--muted); }
+  .t-day { font-size: 13.5px; fill: var(--muted); }
+  .car rect { fill: var(--ink); }
+  .car text { fill: var(--paper); font-size: 12px; font-weight: 700; text-anchor: middle; }
+  .car-x rect { fill: var(--paper); stroke: var(--reset-text); stroke-width: 1.5; stroke-dasharray: 4 3; }
+  .car-x text { fill: var(--reset-text); font-size: 12px; font-weight: 700; text-anchor: middle; }
+  .legend { display: flex; flex-wrap: wrap; gap: 6px 26px; margin: 2px 0 0; padding-bottom: 22px; border-bottom: 1px solid var(--rule); font-size: 14px; color: var(--muted); }
+  .legend svg { vertical-align: middle; margin-right: 7px; }
+
+  section.part { display: grid; grid-template-columns: 400px minmax(0, 1fr); gap: 56px; padding: 40px 0; border-bottom: 1px solid var(--rule); }
+  section.part > * { min-width: 0; }
+  h2 { margin: 0; font-stretch: 62%; font-weight: 800; font-size: 48px; line-height: 0.92; letter-spacing: -0.01em; }
+  .part .intro { margin: 14px 0 0; color: var(--muted); max-width: 24em; font-size: 16px; }
+
+  .tbl { font: 400 14px/1.6 var(--mono); }
+  .tbl div { display: grid; grid-template-columns: 26px 190px 80px 70px 90px minmax(0, 1fr); align-items: center; padding: 8px 0; border-top: 1px solid var(--rule); }
+  .tbl div:first-child { border-top: 0; padding-top: 0; }
+  .tbl .h { font: 400 14px/1.4 var(--sans); color: var(--muted); }
+  .tbl .seg { height: 5px; width: 16px; }
+  .tbl .r { text-align: right; }
+  .tbl .tot { font-weight: 700; border-top: 1px solid var(--ink); }
+  .tbl .no { color: var(--reset-text); }
+  .tbl .est { color: var(--muted); font-family: var(--sans); padding-left: 22px; }
+
+  h3 { margin: 30px 0 8px; font-size: 17px; font-weight: 700; }
+  .misses { font: 400 14px/1.6 var(--mono); }
+  .misses div { display: grid; grid-template-columns: 50px 110px 26px 130px minmax(0, 1fr); align-items: center; padding: 7px 0; border-top: 1px solid var(--rule); }
+  .misses div:first-child { border-top: 0; }
+  .misses .seg { height: 5px; width: 16px; }
+  .misses .why { font-family: var(--sans); font-size: 15px; }
+  .misses .id { color: var(--reset-text); font-weight: 700; }
+
+  .rows { margin: 0; }
+  .rows div { display: grid; grid-template-columns: 190px minmax(0, 1fr) auto; gap: 24px; padding: 13px 0; border-top: 1px solid var(--rule); align-items: baseline; }
+  .rows div:first-child { border-top: 0; padding-top: 2px; }
+  .rows dt { font-weight: 700; }
+  .rows dd { margin: 0; }
+  .rows .act { font-size: 15px; }
+  .rows .two { grid-template-columns: 190px minmax(0, 1fr); }
+
+  footer { display: flex; align-items: baseline; gap: 10px 28px; padding: 20px 0 36px; font-size: 15px; color: var(--muted); }
+  footer .mark { font-size: 17px; color: var(--ink); }
+  footer span:nth-child(2) { margin-right: auto; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <nav>
+    <a class="mark" href="#">Allo Router</a>
+    <span class="ex">Example data</span>
+    <span class="periods"><b>This week</b><a href="#">Last week</a><a href="#">30 days</a></span>
+    <span class="who">Signed in with GitHub as <b>eudotong</b><a href="#">Sign out</a></span>
+  </nav>
+  <p class="note"><b>Example data. Every plan, job and number on this page is made up.</b> <span>This page only gets job numbers, plans, outcomes and estimates. Job names and everything else stay on your computer; open <code>allo-router dashboard</code> there to see them.</span></p>
+
+  <header class="head">
+    <div>
+      <h1>20 jobs this week, <span class="miss">4 missed</span></h1>
+      <p class="sub"><b>$100.11 saved</b>, estimated by pricing every job at API rates and comparing with where it ran.</p>
+      <p class="fine">Week of 10/12/2026, Monday to now, from 2 computers. A miss is a job that failed or timed out, ran on an unverified reading, or found no plan to take it.</p>
+    </div>
+    <div class="side">
+      <div class="big">03:41</div>
+      <p><b>Last upload, Studio Mac.</b> Today, after the 03:00 run.</p>
+      <p>Work laptop last uploaded 10/13/2026 at 16:24.</p>
+      <p class="m">Uploads happen when a run ends. Nothing is sent between runs.</p>
+    </div>
+  </header>
+
+  <div class="map">
+    <svg viewBox="0 0 1312 420" role="img" aria-labelledby="map-t map-d">
+      <title id="map-t">Example week: 20 jobs routed across Codex, Claude work and API credit, 4 missed</title>
+      <desc id="map-d">Codex took 9 jobs and saved an estimated $61.84; job 9 timed out. Claude, work took 5 jobs and saved an estimated $38.27; job 17 ran on a stale reading. API credit took 4 jobs at API price, so it saved $0.00. Jobs 11 and 19 found no plan.</desc>
+
+      <!-- days: Monday 00:00 at x=260, 147.14 px a day -->
+      <g stroke="var(--rule)" stroke-width="1">
+        <path d="M260 34 V384"/><path d="M407 34 V384"/><path d="M554 34 V384"/><path d="M701 34 V384"/>
+        <path d="M849 34 V384"/><path d="M996 34 V384"/><path d="M1143 34 V384"/><path d="M1290 34 V384"/>
+      </g>
+      <g class="t-day">
+        <text x="266" y="406">Mon 10/12</text><text x="413" y="406">Tue 10/13</text><text x="560" y="406">Wed 10/14</text>
+        <text x="707" y="406">Thu 10/15</text><text x="855" y="406">Fri 10/16</text><text x="1002" y="406">Sat 10/17</text><text x="1149" y="406">Sun 10/18</text>
+      </g>
+
+      <!-- incoming track and branches -->
+      <g fill="none" stroke-linejoin="round" stroke-width="12">
+        <path d="M0 215 H150" stroke="var(--ink)" stroke-width="10"/>
+        <path d="M150 215 C200 215 200 80 250 80 H260" stroke="var(--codex)"/>
+        <path d="M150 215 C200 215 200 170 250 170 H260" stroke="var(--claude)"/>
+        <path d="M150 215 C200 215 200 260 250 260 H260" stroke="var(--credit)"/>
+        <path d="M150 215 C200 215 200 350 250 350 H260" stroke="var(--none)" stroke-dasharray="12 8"/>
+      </g>
+      <!-- each line runs to now in its colour; the rest of the week is still ahead -->
+      <g fill="none" stroke-width="14">
+        <path d="M258 80 H666" stroke="var(--codex)"/>
+        <path d="M258 170 H666" stroke="var(--claude)"/>
+        <path d="M258 260 H666" stroke="var(--credit)"/>
+        <path d="M258 350 H666" stroke="var(--none)" stroke-dasharray="12 8"/>
+      </g>
+      <g fill="none" stroke="var(--rule)" stroke-width="4">
+        <path d="M666 80 H1290"/><path d="M666 170 H1290"/><path d="M666 260 H1290"/><path d="M666 350 H1290"/>
+      </g>
+      <circle cx="150" cy="215" r="17" fill="var(--paper)" stroke="var(--ink)" stroke-width="5"/>
+      <text x="168" y="262" text-anchor="end" class="t-in" style="fill:var(--ink);font-weight:700">allo-router</text>
+      <text x="0" y="198" class="t-in">2 computers, 20 jobs</text>
+
+      <!-- now -->
+      <path d="M666 22 V384" stroke="var(--ink)" stroke-width="1.5"/>
+      <text x="672" y="20" style="font-size:13.5px;font-weight:700;fill:var(--ink)">Now, Wed 18:10</text>
+
+      <!-- labels: plan and jobs on the left, the estimate where the week ends -->
+      <text x="262" y="56" class="t-name">Codex<tspan class="t-num" dx="12">9 jobs, 1 missed</tspan></text>
+      <text x="1290" y="70" text-anchor="end" class="t-saved">$61.84 saved<tspan class="t-est" dx="6">estimate</tspan></text>
+      <text x="262" y="146" class="t-name">Claude, work<tspan class="t-num" dx="12">5 jobs, 1 missed</tspan></text>
+      <text x="1290" y="160" text-anchor="end" class="t-saved">$38.27 saved<tspan class="t-est" dx="6">estimate</tspan></text>
+      <text x="262" y="236" class="t-name">API credit<tspan class="t-num" dx="12">4 jobs</tspan></text>
+      <text x="1290" y="250" text-anchor="end" class="t-saved">$0.00 saved<tspan class="t-est" dx="6">runs at API price</tspan></text>
+      <text x="262" y="326" class="t-name" style="fill:var(--reset-text)">No plan took it<tspan class="t-num" dx="12" style="fill:var(--reset-text)">2 jobs</tspan></text>
+
+      <!-- jobs, placed at the run they belong to; cars in one run sit in queue order -->
+      <g class="car"><rect x="278" y="71" width="34" height="18"/><text x="295" y="84">#1</text></g>
+      <g class="car"><rect x="316" y="71" width="34" height="18"/><text x="333" y="84">#2</text></g>
+      <g class="car"><rect x="354" y="71" width="34" height="18"/><text x="371" y="84">#3</text></g>
+      <g class="car"><rect x="392" y="71" width="34" height="18"/><text x="409" y="84">#7</text></g>
+      <g class="car"><rect x="430" y="71" width="34" height="18"/><text x="447" y="84">#8</text></g>
+      <g class="car-x"><rect x="468" y="71" width="34" height="18"/><text x="485" y="84">#9</text></g>
+      <g class="car"><rect x="510" y="71" width="34" height="18"/><text x="527" y="84">#13</text></g>
+      <g class="car"><rect x="573" y="71" width="34" height="18"/><text x="590" y="84">#15</text></g>
+      <g class="car"><rect x="626" y="71" width="34" height="18"/><text x="643" y="84">#16</text></g>
+
+      <g class="car"><rect x="278" y="161" width="34" height="18"/><text x="295" y="174">#4</text></g>
+      <g class="car"><rect x="430" y="161" width="34" height="18"/><text x="447" y="174">#10</text></g>
+      <g class="car"><rect x="468" y="161" width="34" height="18"/><text x="485" y="174">#12</text></g>
+      <g class="car-x"><rect x="573" y="161" width="34" height="18"/><text x="590" y="174">#17</text></g>
+      <g class="car"><rect x="611" y="161" width="34" height="18"/><text x="628" y="174">#18</text></g>
+
+      <g class="car"><rect x="278" y="251" width="34" height="18"/><text x="295" y="264">#5</text></g>
+      <g class="car"><rect x="316" y="251" width="34" height="18"/><text x="333" y="264">#6</text></g>
+      <g class="car"><rect x="507" y="251" width="34" height="18"/><text x="524" y="264">#14</text></g>
+      <g class="car"><rect x="626" y="251" width="34" height="18"/><text x="643" y="264">#20</text></g>
+
+      <g class="car-x"><rect x="430" y="341" width="34" height="18"/><text x="447" y="354">#11</text></g>
+      <g class="car-x"><rect x="573" y="341" width="34" height="18"/><text x="590" y="354">#19</text></g>
+    </svg>
+  </div>
+  <div class="legend" aria-hidden="true">
+    <span><svg width="34" height="18"><rect x="1" y="1" width="32" height="16" fill="var(--ink)"/></svg>Ran</span>
+    <span><svg width="34" height="18"><rect x="1" y="1" width="32" height="16" fill="var(--paper)" stroke="var(--reset-text)" stroke-width="1.5" stroke-dasharray="4 3"/></svg>Missed</span>
+    <span><svg width="28" height="10"><rect width="28" height="10" fill="var(--codex)"/></svg>The plan that took it</span>
+    <span><svg width="28" height="10"><rect y="3" width="28" height="4" fill="var(--rule)"/></svg>Rest of the week</span>
+    <span>Jobs in one run sit in queue order, not to time scale.</span>
+  </div>
+
+  <section class="part">
+    <div>
+      <h2>Where jobs went</h2>
+      <p class="intro">Totals for this week by plan. The saving is an estimate: each job priced at API rates, minus its price on the plan that ran it. A subscription job counts as $0.</p>
+    </div>
+    <div>
+      <div class="tbl" role="table" aria-label="Jobs by plan this week">
+        <div class="h" role="row"><span></span><span>Plan</span><span class="r">Jobs</span><span class="r">Ran</span><span class="r">Missed</span><span class="r">Saved, estimate</span></div>
+        <div role="row"><span class="seg" style="background:var(--codex)"></span><span>codex</span><span class="r">9</span><span class="r">8</span><span class="r no">1</span><span class="r">$61.84</span></div>
+        <div role="row"><span class="seg" style="background:var(--claude)"></span><span>claude_work</span><span class="r">5</span><span class="r">5</span><span class="r no">1</span><span class="r">$38.27</span></div>
+        <div role="row"><span class="seg" style="background:var(--credit)"></span><span>api_credit</span><span class="r">4</span><span class="r">4</span><span class="r">0</span><span class="r">$0.00</span></div>
+        <div role="row"><span class="seg" style="background:var(--none)"></span><span>no plan</span><span class="r">2</span><span class="r">0</span><span class="r no">2</span><span class="r">n/a</span></div>
+        <div role="row" class="tot"><span></span><span>Total</span><span class="r">20</span><span class="r">17</span><span class="r no">4</span><span class="r">$100.11</span></div>
+      </div>
+
+      <h3>Misses</h3>
+      <div class="misses" role="table" aria-label="Missed jobs this week">
+        <div role="row"><span class="id">#9</span><span>Tue 03:00</span><span class="seg" style="background:var(--codex)"></span><span>codex</span><span class="why">Timed out</span></div>
+        <div role="row"><span class="id">#11</span><span>Tue 03:00</span><span class="seg" style="background:var(--none)"></span><span>no plan</span><span class="why">No plan fits this job</span></div>
+        <div role="row"><span class="id">#17</span><span>Wed 03:00</span><span class="seg" style="background:var(--claude)"></span><span>claude_work</span><span class="why">Ran on an unverified reading</span></div>
+        <div role="row"><span class="id">#19</span><span>Wed 03:00</span><span class="seg" style="background:var(--none)"></span><span>no plan</span><span class="why">Its plan had no reading</span></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="part">
+    <div>
+      <h2>Computers</h2>
+      <p class="intro">Each one was connected with <code>allo-router connect</code> and has its own upload token. A token can add jobs, but it can't read anything.</p>
+    </div>
+    <dl class="rows">
+      <div><dt>Studio Mac</dt><dd>Connected 10/02/2026. Last upload today at 03:41. 14 jobs this week.</dd><a class="act" href="#">Disconnect</a></div>
+      <div><dt>Work laptop</dt><dd>Connected 10/09/2026. Last upload 10/13/2026 at 16:24. 6 jobs this week.</dd><a class="act" href="#">Disconnect</a></div>
+    </dl>
+  </section>
+
+  <section class="part">
+    <div>
+      <h2>What this page gets</h2>
+      <p class="intro">The same list is in the privacy page and in <code>allo-router connect --show</code>, which prints the next upload without sending it.</p>
+    </div>
+    <dl class="rows">
+      <div class="two"><dt>Sent</dt><dd>Job number, when it ran, the plan it went to, whether it ran, the estimated saving and why it missed.</dd></div>
+      <div class="two"><dt>Never sent</dt><dd>Job names, prompts, code, commands, output, file paths, usage readings or keys.</dd></div>
+      <div class="two"><dt>Stop</dt><dd><code>allo-router disconnect</code> revokes the token and deletes that computer's history here. Your local dashboard keeps working either way.</dd></div>
+    </dl>
+  </section>
+
+  <footer>
+    <span class="mark">Allo Router</span>
+    <span>app.allorouter.com mockup, 0.5 planning</span>
+    <a href="#">Privacy</a>
+    <a href="#">Delete my account</a>
+  </footer>
+</div>
+</body>
+</html>

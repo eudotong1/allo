@@ -59,9 +59,12 @@ def family(p):
         return "credit"
     src = p["sync"].get("source") if isinstance(p.get("sync"), dict) else None
     text = f"{p.get('id', '')} {p.get('label', '')}".lower()
+    run = p.get("run") if isinstance(p.get("run"), dict) else {}
+    env = run.get("env") if isinstance(run.get("env"), dict) else {}
+    home = f"{(p.get('sync') or {}).get('home') if isinstance(p.get('sync'), dict) else ''} {env.get('CLAUDE_CONFIG_DIR') or ''}".lower()
     if src == "codex" or any(w in text for w in ("codex", "chatgpt", "openai")):
         return "codex"
-    if src == "claude" or "claude" in text:
+    if src == "claude" or "claude" in text or "personal" in home:
         return "claude"
     return "other"
 

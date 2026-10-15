@@ -3,6 +3,7 @@
 
 Reads pools.json and tasks.json from the directory you point it at (default: current directory).
 The planner in this file is read-only. It never calls a network, never sends anything and never starts a job.
+The one module that can send anything is allo_upload.py, and it is off until you run `allo-router connect`.
 Unknown readings are printed as unknown, not guessed. Starting jobs lives in allo_exec.py, behind `run`.
 The report on what ran lives in allo_report.py, behind `report`; it is read-only too.
 Readings can be typed in with `set` or read from local files with `sync` (allo_sync.py); pools that opt in with
@@ -17,6 +18,10 @@ Readings can be typed in with `set` or read from local files with `sync` (allo_s
   allo-router report               summarize runs.jsonl as markdown (--period day|week, --since, --csv FILE)
   allo-router dashboard            open a read-only local page on 127.0.0.1: plans, queue, schedule, what ran; see allo_dash.py
   allo-router dashboard --install-launcher   add an "Allo Dashboard" you can double-click to open it
+  allo-router connect              opt in to the hosted dashboard (off by default); see allo_upload.py
+  allo-router connect --show       print exactly what the next upload would send, and send nothing
+  allo-router upload               send new job rows now (only once connected)
+  allo-router disconnect           revoke the upload token and delete this computer's history on the server
   allo-router --dir examples       use another folder
   allo-router --no-sync            do not auto-sync before printing or previewing a plan
   allo-router --version            print the version
@@ -26,7 +31,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-__version__ = "0.4.0"
+__version__ = "0.5.0"
 STALE_H = 24
 RECURRING = ("daily", "weekly")
 
@@ -369,9 +374,12 @@ def cmd_init(here):
     print("wrote pools.json and tasks.json. Edit them to match your plans, then run: allo-router")
 
 
+OWN_HELP = ("run", "report", "sync", "dashboard", "connect", "upload", "disconnect")
+
+
 def main(argv):
-    # run, report, sync and dashboard have their own --help; everything else gets this file's usage.
-    if ("-h" in argv or "--help" in argv) and not {"run", "report", "sync", "dashboard"} & set(argv[:3]):
+    # These commands have their own --help; everything else gets this file's usage.
+    if ("-h" in argv or "--help" in argv) and not set(OWN_HELP) & set(argv[:3]):
         print(__doc__)
         return
     here = Path(".")
@@ -399,13 +407,26 @@ def main(argv):
                 # A saved plan is never re-synced: new readings would (rightly) make it refuse to run.
                 import allo_sync
                 allo_sync.auto_sync(here, datetime.now(timezone.utc))
-            sys.exit(allo_exec.cmd_run(here, argv[1:], datetime.now(timezone.utc)))
+            after = None
+            if "--execute" in argv:
+                import allo_upload  # does nothing unless `allo-router connect` was run on this computer
+                after = allo_upload.AfterJobs.if_connected(here)
+            kw = {"after_job": after.job_done} if after else {}
+            code = allo_exec.cmd_run(here, argv[1:], datetime.now(timezone.utc), **kw)
+            if after:
+                after.finish()
+            sys.exit(code)
         elif argv and argv[0] == "report":
             import allo_report
             sys.exit(allo_report.cmd_report(here, argv[1:], datetime.now(timezone.utc)))
         elif argv and argv[0] == "dashboard":
             import allo_dash  # never syncs: the dashboard only reads
             sys.exit(allo_dash.cmd_dashboard(here, argv[1:], lambda: datetime.now(timezone.utc)))
+        elif argv and argv[0] in ("connect", "upload", "disconnect"):
+            import allo_upload
+            cmd = {"connect": allo_upload.cmd_connect, "upload": allo_upload.cmd_upload,
+                   "disconnect": allo_upload.cmd_disconnect}[argv[0]]
+            sys.exit(cmd(here, argv[1:], datetime.now(timezone.utc)))
         else:
             if autosync and not argv:
                 import allo_sync

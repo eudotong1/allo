@@ -1,0 +1,15 @@
+{
+  "name": "allo-router-hosted-worker",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler d1 migrations apply allo --local && wrangler dev --var DEV_LOGIN:true",
+    "migrate:local": "wrangler d1 migrations apply allo --local",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-plugin": "^1.4.2",
+    "vitest": "^4.1.11",
+    "wrangler": "^4.151.0"
+  }
+}

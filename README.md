@@ -9,12 +9,13 @@ You pay for several AI plans. Each has its own weekly limit and its own reset ti
 ![The Allo Router dashboard, example data: job 14 running on Codex, the next scheduled run at 03:00, and each plan's line running to its reset with the queued jobs on it.](docs/dashboard.png)
 *Example data. Every plan, job and number in this screenshot is made up.*
 
-It has five parts:
+It has five parts, plus an opt-in upload that is off by default:
 - The **planner** reads two JSON files you keep and prints a proposal. It never logs in to a plan, never starts a job, never sends anything and makes no network calls.
 - **Sync** (`allo-router sync`) fills in how much of each plan is used from files Claude Code and Codex already keep on your computer, where they record it. Where a source gives no limit, it says so instead of guessing.
 - The **executor** (`allo-router run`) previews that proposal and saves it as a plan file. `allo-router run --plan plan.json --execute` then runs exactly that reviewed plan through the CLI you configured for each pool, such as `claude -p` or `codex exec`, asking before each job. If anything changed since you reviewed it, it refuses and starts nothing.
 - The **report** (`allo-router report`) reads the run log and summarizes what was routed where, what worked, what misrouted, the share of each plan's limit jobs actually used (measured, where it can be), and a separately labelled estimate of the usage saved. It is read-only.
 - The **dashboard** (`allo-router dashboard`) opens a read-only page, served from your own computer, showing the same files live: what is running, what each plan has left, where each queued job would go, and whether the next scheduled run will accept its plan.
+- The **upload** (`allo-router connect`), off by default, sends summary numbers about finished jobs to the hosted dashboard at app.allorouter.com so you can see them from any browser. Nothing is sent until you run it and approve the computer. [More below](#hosted-dashboard-opt-in).
 
 ## Quickstart
 Needs Python 3.9 or newer. No dependencies. Install with `pip install .` (or `uv tool install .`) from this folder (not on PyPI yet), or run `python3 allo.py` directly.
@@ -155,6 +156,18 @@ It shows:
 
 It is read-only: it never syncs, never starts a job and never loads or unloads a launchd agent. It answers GET only and refuses requests whose `Host` is not this computer, so a web page elsewhere cannot read it through your browser. Anything else running on this computer can reach 127.0.0.1:8765 while it is open, and the page shows your prompts and commands; it does not run unless you start it. `--json` prints the data and exits. `--example` serves made-up data, labelled "Example data" on the page. It refreshes every 15 seconds.
 
+## Hosted dashboard (opt-in)
+Off by default. app.allorouter.com shows which plan took each job, what ran, what missed and the estimated saving, across your computers, from any browser. Sign in with GitHub. It is free for the first 100 users; after that, new sign-ins join a waitlist.
+
+    allo-router connect --show        # print exactly the JSON the next upload would send; sends nothing
+    allo-router connect               # approve this computer once in the browser; uploads start after that
+    allo-router upload                # send new job rows now
+    allo-router disconnect            # revoke the token and delete this computer's history on the server
+
+Once connected, `run --execute` uploads after jobs finish, at most once every 15 seconds and once at the end, and the page updates within about 15 seconds. A failed upload never fails a run.
+
+**What an upload carries, per job:** a hashed id, the minute it started, the plan as `pool-1`, `pool-2` (the names you gave your plans never leave), the plan type and provider, whether it ran, why it missed, and the estimated saving. **Never:** job names, prompts, commands, code, output, file names or paths, plan names or labels, usage readings or "% left", token counts, hostnames or keys. The payload is built field by field from an allowlist and the server rejects any other field. `allo_upload.py` is the only module that opens a connection; the planner, sync, executor, report and local dashboard still open none. Every upload is logged in `~/.config/allo-router/connect.log`.
+
 ## What it does not do
 - It does not contact any provider for usage. `sync` reads only files on your computer, and only where those files hold a limit does it record a percentage. Those formats are undocumented and may change; when they do, sync says UNAVAILABLE and you type the numbers in with `set`.
 - It does not check whether a provider's terms allow a given use of your plan, including running a CLI non-interactively. That is yours to read.
@@ -162,7 +175,7 @@ It is read-only: it never syncs, never starts a job and never loads or unloads a
 - No built-in scheduler. A reviewed plan can be run from launchd or cron with `run --refresh` then `run --plan ... --execute --yes` ([examples/launchd/](examples/launchd/)); a person still reviews each plan. See [docs/roadmap.md](docs/roadmap.md).
 
 ## More
-- [CHANGELOG.md](CHANGELOG.md): what changed in each version. This is 0.4.0; `allo-router --version` prints it.
+- [CHANGELOG.md](CHANGELOG.md): what changed in each version. This is 0.5.0; `allo-router --version` prints it.
 - [docs/architecture.md](docs/architecture.md): how the planner, sync, executor and report fit together, and how to write a backend.
 - [docs/roadmap.md](docs/roadmap.md): what is next.
 - [examples/](examples/): the starter config and a custom backend.
@@ -173,4 +186,6 @@ It is read-only: it never syncs, never starts a job and never loads or unloads a
 
 or, with uv and no install: `uvx --python 3.12 pytest -q tests`.
 
-Tests never use the network: a fixture blocks sockets, and the shell backend is exercised with small local Python commands.
+Tests never use the network: a fixture blocks sockets, the shell backend is exercised with small local Python commands, and the upload tests stub the transport.
+
+The hosted dashboard's server has its own tests: `cd hosted/worker && npm install && npm test`. See [plans/hosted/README.md](plans/hosted/README.md) to run it locally.

@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<link rel="stylesheet" href="/app.css">
+<title>Sign in: Allo Router</title>
+<script type="module" src="/signin.js"></script>
+</head>
+<body>
+<div class="band"><div class="wrap"><nav><a class="mark" href="https://allorouter.com">Allo Router</a><span class="who"><a href="/privacy">Privacy</a></span></nav></div></div>
+<div class="wrap">
+  <main class="page">
+    <div>
+      <h1>What the router did, from any browser</h1>
+      <p class="lede"><b>Allo</b>cate usage across your plans based on how much of each limit remains.</p>
+      <p class="fine">Which plan took each job, what ran, what missed and the estimated saving, across your computers. It updates as jobs finish.</p>
+      <p class="fine">Opt-in. Nothing reaches this site until you run <code>allo-router connect</code> on a computer and approve it here. Job names, prompts, code, paths and readings never leave your computer.</p>
+      <div class="actions">
+        <a class="btn" id="github" href="/auth/login" hidden>Sign in with GitHub</a>
+        <span class="status bad" id="nosignin" hidden>Sign-in isn't set up on this server yet.</span>
+      </div>
+      <form class="dev" id="dev" hidden>
+        <p>Local development sign-in. Only works on localhost when no GitHub app is configured.</p>
+        <label class="field"><span>GitHub-style login to sign in as</span><input name="login" value="eudotong" pattern="[A-Za-z0-9-]{1,39}" required></label>
+        <div class="actions"><button class="btn ghost" type="submit">Sign in locally</button></div>
+      </form>
+    </div>
+    <aside class="side">
+      <p class="spots" id="spots-big" hidden></p>
+      <p>Free for the first 100 users. After that, new sign-ins join a waitlist.</p>
+      <p class="m">Sent: a hashed job id, the minute it started, the plan as pool-1, pool-2, whether it ran, why it missed and the estimated saving. <a href="/privacy">Everything that is and isn't sent</a>.</p>
+    </aside>
+  </main>
+  <footer><span class="mark">Allo Router</span><span>app.allorouter.com</span><a href="/privacy">Privacy</a></footer>
+</div>
+</body>
+</html>

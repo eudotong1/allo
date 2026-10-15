@@ -1,6 +1,24 @@
 # Changelog
 
+## Unreleased
+
+### Hosted dashboard: plan names and distinguishable jobs
+- Providers now resolve to **ChatGPT** (codex), **Claude Personal** (personal config dir), and **Claude Team** (default Claude), so the hosted page no longer shows "Other, pool 3" / "Claude, pool 1".
+- Uploads may include a short job `title` (from the task name, max 48 chars), plus `model` and `effort` parsed from the pool's run command. Timeline chips show the title (full text on hover); a Name / Model / Effort toggle colours chips accordingly.
+- Re-uploads upsert rows, so a corrected provider or title can replace an earlier "other" reading for the same hashed job id.
+- Local dashboard cars show the job short name (not only `#1`), and Emman's live `pools.json` labels are Claude Personal / Claude Team / ChatGPT.
+
 All notable changes to Allo Router. Dates are MM/DD/YYYY.
+
+## 0.5.0 (10/14/2026)
+
+### Added
+- **`allo-router connect`: an opt-in upload to the hosted dashboard at app.allorouter.com. Off by default.** Nothing is sent until you run `connect` and approve the computer once in the browser (a device code, like signing in a TV). The upload token is kept in `~/.config/allo-router/connect.json` (mode 0600), outside the router folder; the server stores only its SHA-256.
+- **What an upload carries, per job:** a hashed id (HMAC with a salt that never leaves the computer), the start time rounded to the minute, the pool as `pool-1`, `pool-2`... (the ids and labels you typed never leave), the plan type, the provider (`claude` / `codex` / `gemini` / `api` / `other`), the outcome, why it missed (an enum) and the estimated saving in USD. Never task names, prompts, commands, code, output, file names or paths, readings or "% left", token counts, hostnames or keys. The payload is built field by field from an allowlist and checked again before sending; the server rejects any other field.
+- **`allo-router connect --show`** prints exactly the JSON the next upload would send, and sends nothing, connected or not.
+- **`allo-router upload`** sends new `runs.jsonl` lines now. Once connected, `run --execute` uploads after jobs finish, at most once every 15 seconds and once at the end; a failed upload never fails the run and the lines go with the next one. Every upload is logged in `connect.log` next to the token.
+- **`allo-router disconnect`** revokes the token, deletes the computer's history on the server (`--keep-history` keeps it) and forgets the connection locally, even if the server can't be reached.
+- `allo_upload.py` is the only module with network code. A test checks the others have none (the local dashboard's loopback check of its own page is the one, listed, exception).
 
 ## 0.4.0 (10/14/2026)
 

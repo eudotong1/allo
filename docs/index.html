@@ -110,6 +110,9 @@
   .shot img { display: block; width: 100%; height: auto; border: 1px solid var(--rule); }
   .shot figcaption { margin-top: 10px; font-size: 14px; color: var(--muted); }
   .shot + .rows { margin-top: 26px; }
+  .spots-line { margin: 18px 0 0; font-size: 16px; }
+  .spots-line a { font-weight: 700; }
+  .part .spots-big { margin: 22px 0 0; font-size: 20px; }
 
   footer { display: flex; flex-wrap: wrap; align-items: baseline; gap: 10px 28px; padding: 22px 0 40px; border-top: 1px solid var(--rule); font-size: 15px; color: var(--muted); }
   footer .mark { font-size: 17px; color: var(--ink); margin-right: 0; }
@@ -164,12 +167,13 @@
   <nav>
     <a class="mark" href="#">Allo Router</a>
     <a href="#dashboard">Dashboard</a>
+    <a href="#hosted">Hosted</a>
     <a href="#how">How it decides</a>
     <a href="#reviewed">Reviewed runs</a>
     <a href="#quickstart">Quickstart</a>
     <a href="https://github.com/eudotong1/allo/blob/main/CHANGELOG.md">Changelog</a>
     <a href="https://github.com/eudotong1/allo">GitHub</a>
-    <span class="ver">0.4.0</span>
+    <span class="ver">0.5.0</span>
   </nav>
 
   <header class="hero">
@@ -182,6 +186,7 @@
         <a class="text" href="#dashboard">See the dashboard</a>
         <a class="text" href="https://github.com/eudotong1/allo">Source on GitHub</a>
       </div>
+      <p class="spots-line" data-spots hidden></p>
       <p class="install"><b>allo-router sync</b> then <b>allo-router run</b><br><b>allo-router dashboard</b> to watch it<br>Python 3.9 or newer, no dependencies.</p>
     </div>
 
@@ -306,6 +311,20 @@
     </div>
   </section>
 
+  <section class="part" id="hosted">
+    <div>
+      <h2>Or see it from any browser</h2>
+      <p class="intro">Optional, and off by default. <a href="https://app.allorouter.com">app.allorouter.com</a> shows which plan took each job, what ran, what missed and the estimated saving, across your computers, and updates as jobs finish. Nothing is sent until you run <code>allo-router connect</code> and approve the computer.</p>
+      <p class="spots-big" data-spots hidden></p>
+    </div>
+    <dl class="rows">
+      <div><dt>Off by default</dt><dd>Without <code>allo-router connect</code>, nothing leaves your computer. <code>allo-router disconnect</code> stops uploads and deletes that computer's history there.</dd></div>
+      <div><dt>Summary numbers only</dt><dd>Per job: a hashed id, the minute it started, the plan as pool-1, pool-2, its type and provider, whether it ran, why it missed and the estimated saving. Never job names, prompts, code, commands, output, file names or paths, plan names, readings or keys.</dd></div>
+      <div><dt>Check it first</dt><dd><code>allo-router connect --show</code> prints exactly what the next upload would send, and sends nothing. The server refuses any other field.</dd></div>
+      <div><dt>Free for 100</dt><dd>Sign in with GitHub. Free for the first 100 users; after that, new sign-ins join a waitlist. The local dashboard stays free for everyone.</dd></div>
+    </dl>
+  </section>
+
   <section class="part" id="how">
     <div>
       <h2>How it decides</h2>
@@ -375,12 +394,32 @@ allo-router dashboard              <span class="c"># opens all of the above in y
 
   <footer>
     <span class="mark">Allo Router</span>
-    <span>0.4.0. Free and MIT licensed.</span>
+    <span>0.5.0. Free and MIT licensed.</span>
     <a href="https://github.com/eudotong1/allo">GitHub</a>
     <a href="https://github.com/eudotong1/allo/blob/main/CHANGELOG.md">Changelog</a>
     <a href="https://github.com/eudotong1/allo/blob/main/docs/architecture.md">Architecture</a>
     <a href="https://github.com/eudotong1/allo/blob/main/docs/roadmap.md">Roadmap</a>
   </footer>
 </div>
+<script>
+// "X of 100 free spots left", counted by the hosted dashboard from real sign-ups. Hidden if it can't be fetched.
+(function () {
+  var local = /^(localhost|127\.0\.0\.1)$/.test(location.hostname);
+  var base = local ? "http://127.0.0.1:8787" : "https://app.allorouter.com";
+  var els = document.querySelectorAll("[data-spots]");
+  if (!window.fetch || !els.length) return;
+  fetch(base + "/v1/spots", { mode: "cors", credentials: "omit" })
+    .then(function (r) { if (!r.ok) throw new Error(); return r.json(); })
+    .then(function (s) {
+      if (typeof s.left !== "number" || typeof s.limit !== "number") return;
+      var n = s.left > 0 ? "<b>" + s.left + " of " + s.limit + "</b> free spots left" : "All " + s.limit + " free spots are taken; new sign-ins join the waitlist";
+      els.forEach(function (el) {
+        el.innerHTML = el.classList.contains("spots-line") ? 'Hosted dashboard, opt-in: ' + n + '. <a href="#hosted">What it sends</a>' : n;
+        el.hidden = false;
+      });
+    })
+    .catch(function () {});
+})();
+</script>
 </body>
 </html>
