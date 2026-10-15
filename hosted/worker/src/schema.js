@@ -5,12 +5,12 @@
 export const SCHEMA = 1;
 export const MAX_ROWS = 500;
 export const TOP_KEYS = ["schema", "sent_at", "jobs"];
-export const JOB_KEYS = ["id", "at", "pool", "plan_type", "provider", "status", "skip", "miss", "est_saved_usd", "title", "model", "effort"];
-export const STATUSES = ["ok", "failed", "timeout", "error", "skipped", "dry-run"];
+export const JOB_KEYS = ["id", "at", "pool", "plan_type", "provider", "status", "skip", "miss", "est_saved_usd", "title", "model", "effort", "heartbeat_at"];
+export const STATUSES = ["ok", "failed", "timeout", "error", "skipped", "dry-run", "running"];
 export const SKIPS = ["unassigned", "needs-reading", "already-ran", "bad-run-block", "missing-cwd", "declined", "manual", "other"];
 export const MISSES = ["failed", "timeout", "error", "unverified-reading", "unassigned", "needs-reading", "bad-run-block", "missing-cwd", "other"];
-export const PLAN_TYPES = ["subscription", "credit_usd", "other"];
-export const PROVIDERS = ["claude", "claude_personal", "claude_team", "codex", "gemini", "api", "other"];
+export const PLAN_TYPES = ["subscription", "credit_usd", "orchestrator", "other"];
+export const PROVIDERS = ["claude", "claude_personal", "claude_team", "codex", "grok", "gemini", "api", "other"];
 export const MODELS = ["opus", "sonnet", "haiku", "gpt-5", "gpt-5-codex", "o3", "o4-mini", "other"];
 export const EFFORTS = ["low", "medium", "high", "very_high", "xhigh"];
 
@@ -64,6 +64,7 @@ export function validatePayload(p) {
       return `jobs[${i}].title is not allowed`;
     if (j.model !== null && !MODELS.includes(j.model)) return `jobs[${i}].model is not allowed`;
     if (j.effort !== null && !EFFORTS.includes(j.effort)) return `jobs[${i}].effort is not allowed`;
+    if (j.heartbeat_at !== null && !validMinute(j.heartbeat_at)) return `jobs[${i}].heartbeat_at must be a UTC time rounded to the minute`;
   }
   return null;
 }

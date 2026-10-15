@@ -102,7 +102,7 @@ def test_payload_holds_only_allowlisted_keys(tmp_path):
     for j in payload["jobs"]:
         assert set(j) == set(up.JOB_KEYS)
         assert set(up.JOB_KEYS) == {"id", "at", "pool", "plan_type", "provider", "status", "skip", "miss",
-                                    "est_saved_usd", "title", "model", "effort"}
+                                    "est_saved_usd", "title", "model", "effort", "heartbeat_at"}
 
 
 def test_canary_never_leaves(tmp_path):

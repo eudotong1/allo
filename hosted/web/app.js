@@ -3,15 +3,16 @@
 import { api, DAYS, esc, hhmm, mdy, parseMinute, post, signInUrl, signOut } from "/common.js";
 
 const POLL_MS = 15000;
+const POLL_LIVE_MS = 3000;
 const COLORS = {
   codex: "var(--codex)", chatgpt: "var(--codex)",
   claude: "var(--claude)", claude_personal: "var(--claude)", claude_team: "#C4A35A",
-  api: "var(--credit)", gemini: "var(--gemini)", other: "var(--other)",
+  grok: "#1C1C1C", api: "var(--credit)", gemini: "var(--gemini)", other: "var(--other)",
 };
 const EXTRA = ["#0F7C8C", "#6A4C93", "#B5651D", "#2E7D32", "#8C2F39"];
 const PROVIDER = {
   claude: "Claude", claude_personal: "Claude Personal", claude_team: "Claude Team",
-  codex: "ChatGPT", chatgpt: "ChatGPT", gemini: "Gemini", api: "API credit", other: "Other",
+  codex: "ChatGPT", chatgpt: "ChatGPT", grok: "Grok Bot", gemini: "Gemini", api: "API credit", other: "Other",
 };
 const MODEL_COLOR = {
   opus: "#6A4C93", sonnet: "#0F7C8C", haiku: "#2E7D32",
@@ -42,7 +43,7 @@ function planLabel(provider, pool, computer) {
   // Specific providers are the display name; generic Claude/Other keep pool-N for disambiguation.
   const base = (p === "claude" || p === "other" || p === "gemini")
     ? `${named}, pool ${n}`
-    : named;
+    : named; // ChatGPT / Claude Personal / Claude Team / Grok Bot stand alone
   return base + (computer ? ` on ${computer}` : "");
 }
 
@@ -87,6 +88,29 @@ function chipToggle(d) {
   const hasMeta = (d.jobs || []).some((j) => j.model || j.effort || j.title);
   if (!hasMeta) return "";
   return `<div class="chip-modes" role="group" aria-label="Colour chips by">${buttons}</div>`;
+}
+
+function fmtElapsed(sec) {
+  if (sec == null) return "";
+  const s = Math.max(0, Math.floor(sec));
+  const m = Math.floor(s / 60), r = s % 60;
+  return m > 0 ? `${m}m ${String(r).padStart(2, "0")}s` : `${r}s`;
+}
+
+function runningStrip(d, lines) {
+  const live = d.running || [];
+  if (!live.length) return "";
+  const lineOf = Object.fromEntries(lines.map((l) => [l.key, l]));
+  const items = live.map((j) => {
+    const l = lineOf[j.line] || { color: "var(--ink)", short: "plan", name: "plan" };
+    const name = j.title || `#${j.n}`;
+    return `<li style="--c:${l.color}"><span class="pulse" aria-hidden="true"></span>` +
+      `<b>${esc(name)}</b><span class="on">${esc(l.short)}</span>` +
+      `<span class="clock" data-started="${esc(j.started_at || j.at)}">${fmtElapsed(j.seconds)}</span></li>`;
+  }).join("");
+  return `<section class="running" aria-live="polite"><div class="running-head"><h2 class="cond">Running now</h2>` +
+    `<p class="intro">${live.length === 1 ? "One job is in flight." : live.length + " jobs are in flight."} Updates every few seconds.</p></div>` +
+    `<ul class="running-list">${items}</ul></section>`;
 }
 
 
@@ -242,12 +266,14 @@ function map(d, lines, now) {
       const cx = Math.max(x(parseMinute(j.at).getTime()), prevEnd + 4);
       if (cx + w > X1 - 4) { hidden++; continue; }
       prevEnd = cx + w;
-      const missed = j.miss.length > 0;
-      const fill = chipFill(j, l.color);
+      const missed = j.miss && j.miss.length > 0;
+      const isRun = j.status === "running";
+      const fill = isRun ? (l.color || "var(--ink)") : chipFill(j, l.color);
       const tip = [`#${j.n}`, j.title, j.model, j.effort ? `effort ${j.effort.replace("_", " ")}` : null, j.status,
+        isRun && j.seconds != null ? fmtElapsed(j.seconds) : null,
         missed ? j.miss.map((m) => WHY[m] || m).join(", ") : null].filter(Boolean).join(" · ");
       const fillAttr = (!missed && fill) ? ` style="fill:${fill}"` : "";
-      s += `<g class="${missed ? "car-x" : "car"}"><title>${esc(tip)}</title>` +
+      s += `<g class="${missed ? "car-x" : (isRun ? "car-run" : "car")}"><title>${esc(tip)}</title>` +
         `<rect x="${cx.toFixed(1)}" y="${y - 9}" width="${w}" height="18"${fillAttr}/><text x="${(cx + w / 2).toFixed(1)}" y="${y + 4}">${esc(label)}</text></g>`;
     }
     if (hidden) s += `<text x="${X1 - 4}" y="${y + 26}" text-anchor="end" class="more">+${hidden} more, see the table</text>`;
@@ -337,7 +363,7 @@ function render() {
   const lines = styleLines(data.lines);
   const body = data.computers.length === 0
     ? empty()
-    : (lines.length ? allocation(data, lines) + chipToggle(data) + map(data, lines, now) : `<section class="empty"><h2>No jobs in this period</h2><p class="intro">Jobs show up here after <code>run --execute</code> finishes them on a connected computer.</p></section>`) +
+    : (lines.length || (data.running && data.running.length) ? runningStrip(data, lines) + allocation(data, lines) + chipToggle(data) + map(data, lines, now) : `<section class="empty"><h2>No jobs in this period</h2><p class="intro">Jobs show up here after <code>run --execute</code> finishes them on a connected computer.</p></section>`) +
       tables(data, lines) + computers(data);
   const note = `<p class="note"><b>Only job numbers, plans, outcomes and estimates reach this page.</b> Job names and everything else stay on your computer; open <code>allo-router dashboard</code> there to see them. Times are UTC.</p>`;
   document.getElementById("app").innerHTML = `${nav(data)}<div class="wrap">${note}${header(data, now)}${body}${about}
@@ -355,6 +381,7 @@ function render() {
   for (const b of document.querySelectorAll("[data-chip-mode]")) {
     b.onclick = () => { chipMode = b.getAttribute("data-chip-mode"); render(); };
   }
+  tickClocks();
   document.getElementById("delete").onclick = async () => {
     if (!confirm("Delete your account? Every computer's token stops working and all your history here is deleted.")) return;
     await post("/v1/me/delete");
@@ -370,6 +397,14 @@ function render() {
   }
 }
 
+function tickClocks() {
+  for (const el of document.querySelectorAll(".clock[data-started]")) {
+    const start = Date.parse(String(el.getAttribute("data-started")).replace(/Z$/, ":00Z"));
+    if (!Number.isFinite(start)) continue;
+    el.textContent = fmtElapsed(Math.round((Date.now() - start) / 1000));
+  }
+}
+
 async function load() {
   const r = await api(`/v1/me/dashboard?range=${encodeURIComponent(range)}`, { headers: etag ? { "If-None-Match": etag } : {} }).catch(() => null);
   if (!r) return;
@@ -380,6 +415,11 @@ async function load() {
     data = r.body;
   }
   render();  // a 304 still re-renders, so "now" moves along
+  const live = data && data.running && data.running.length;
+  if (window.__alloPoll) clearInterval(window.__alloPoll);
+  window.__alloPoll = setInterval(() => { if (!document.hidden) load(); }, live ? POLL_LIVE_MS : POLL_MS);
+  if (window.__alloClock) clearInterval(window.__alloClock);
+  if (live) window.__alloClock = setInterval(tickClocks, 1000);
 }
 
 setInterval(() => { if (!document.hidden) load(); }, POLL_MS);

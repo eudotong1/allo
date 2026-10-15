@@ -12,7 +12,7 @@ module that opens a network connection, and only for these commands, or after `r
 
 What an upload carries, per job: a hashed id, when it started (rounded to the minute), which pool took it (as
 pool-1, pool-2...; the pool ids you typed never leave), the plan type (subscription / credit_usd), the provider
-(claude / claude_personal / claude_team / codex / gemini / api / other), a short job title (from the task name,
+(claude / claude_personal / claude_team / codex / grok / gemini / api / other), a short job title (from the task name,
 max 48 chars), the model and effort when those are set on the pool's run command, the outcome, why it missed,
 and the estimated saving in USD.
 It never carries prompts, commands, code, output, file names or paths, readings ("% left"), token counts,
@@ -49,13 +49,13 @@ DEBOUNCE_S = 15
 # The allowlist. The server holds the same lists (hosted/worker/src/schema.js) and rejects anything else.
 TOP_KEYS = ("schema", "sent_at", "jobs")
 JOB_KEYS = ("id", "at", "pool", "plan_type", "provider", "status", "skip", "miss", "est_saved_usd",
-            "title", "model", "effort")
-STATUSES = ("ok", "failed", "timeout", "error", "skipped", "dry-run")
+            "title", "model", "effort", "heartbeat_at")
+STATUSES = ("ok", "failed", "timeout", "error", "skipped", "dry-run", "running")
 SKIPS = ("unassigned", "needs-reading", "already-ran", "bad-run-block", "missing-cwd", "declined", "manual", "other")
 MISSES = ("failed", "timeout", "error", "unverified-reading", "unassigned", "needs-reading", "bad-run-block",
           "missing-cwd", "other")
-PLAN_TYPES = ("subscription", "credit_usd", "other")
-PROVIDERS = ("claude", "claude_personal", "claude_team", "codex", "gemini", "api", "other")
+PLAN_TYPES = ("subscription", "credit_usd", "orchestrator", "other")
+PROVIDERS = ("claude", "claude_personal", "claude_team", "codex", "grok", "gemini", "api", "other")
 MODELS = ("opus", "sonnet", "haiku", "gpt-5", "gpt-5-codex", "o3", "o4-mini", "other")
 EFFORTS = ("low", "medium", "high", "very_high", "xhigh")
 TITLE_OK = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 ._\-/:#]{0,47}$")
@@ -133,7 +133,7 @@ def pool_ref(pool_id, pools):
 
 
 def plan_type(kind):
-    return kind if kind in ("subscription", "credit_usd") else "other"
+    return kind if kind in ("subscription", "credit_usd", "orchestrator") else "other"
 
 
 def _run_exe(pool_cfg):
@@ -166,7 +166,10 @@ def provider(pool_cfg, kind):
     exe = _run_exe(pool_cfg)
     is_claude = source == "claude" or (exe and (exe == "claude" or exe.startswith("claude-")))
     is_codex = source == "codex" or (exe and (exe == "codex" or exe.startswith("codex-")))
+    is_grok = source == "grok" or (exe and (exe == "grok" or exe.startswith("grok-")))
     is_gemini = exe and (exe == "gemini" or exe.startswith("gemini-"))
+    if kind == "orchestrator" or is_grok:
+        return "grok"
     if is_claude:
         return "claude_personal" if _personal_home(pool_cfg) else "claude_team"
     if is_codex:
@@ -279,6 +282,7 @@ def build_payload(entries, cfg, salt, pools, now, est_now=None):
             "title": short_title(e.get("task_name")),
             "model": model,
             "effort": effort,
+            "heartbeat_at": minute(e["_at"]) if e.get("status") == "running" else None,
         })
     payload = {"schema": SCHEMA, "sent_at": minute(now), "jobs": jobs}
     check_payload(payload)
@@ -305,7 +309,8 @@ def check_payload(payload):
               and (j["est_saved_usd"] is None or (isinstance(j["est_saved_usd"], (int, float))
                                                   and not isinstance(j["est_saved_usd"], bool)))
               and (j["title"] is None or (isinstance(j["title"], str) and TITLE_OK.match(j["title"])))
-              and j["model"] in MODELS + (None,) and j["effort"] in EFFORTS + (None,))
+              and j["model"] in MODELS + (None,) and j["effort"] in EFFORTS + (None,)
+              and (j["heartbeat_at"] is None or MINUTE.match(str(j["heartbeat_at"]))))
         if not ok:
             raise UploadError(f"job {j.get('id')!r} has a value outside the allowlist")
 
