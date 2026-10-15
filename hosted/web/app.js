@@ -40,46 +40,82 @@ function styleLines(lines) {
 
 function nav(d) {
   const periods = RANGES.map(([k, label]) => `<a href="/?range=${k}" class="${k === d.range.key ? "on" : ""}">${label}</a>`).join("");
-  return `<nav>
+  const live = checkedAt
+    ? `Live, checked ${hhmm(checkedAt)}:${String(checkedAt.getUTCSeconds()).padStart(2, "0")} UTC`
+    : "";
+  return `<div class="band"><div class="wrap"><nav>
     <a class="mark" href="/">Allo Router</a>
     <span class="periods">${periods}</span>
-    <span class="live" id="live">${checkedAt ? `Live. Checked ${hhmm(checkedAt)}:${String(checkedAt.getUTCSeconds()).padStart(2, "0")} UTC` : ""}</span>
-    <span class="who">Signed in with GitHub as <b>${esc(d.login)}</b><button class="link" id="signout">Sign out</button></span>
-  </nav>
-  <p class="note"><b>Only job numbers, plans, outcomes and estimates reach this page.</b> <span>Job names and everything else stay on your computer; open <code>allo-router dashboard</code> there to see them. Times are UTC.</span></p>`;
+    <span class="who"><span class="live" id="live">${live}</span><span>GitHub: <b>${esc(d.login)}</b></span><button class="link" id="signout">Sign out</button></span>
+  </nav></div></div>`;
 }
+
 
 function header(d, now) {
   const t = d.totals;
-  const when = { week: "this week", last: "last week", "30d": "in 30 days" }[d.range.key];
+  const plans = d.lines.filter((l) => l.pool).length;
   const start = new Date(d.range.start);
   const scope = {
     week: `Week of ${mdy(start)}, Monday to now`,
     last: `Week of ${mdy(start)}, Monday to Sunday`,
     "30d": `The 30 days to ${mdy(now)}`,
   }[d.range.key];
+  const whenSaved = { week: "this week", last: "last week", "30d": "in the last 30 days" }[d.range.key];
   const comps = d.computers.filter((c) => c.last_upload_at).sort((a, b) => b.last_upload_at.localeCompare(a.last_upload_at));
-  let side;
-  if (!comps.length) {
-    side = `<div class="big">--:--</div><p><b>No upload yet.</b></p>`;
+  const uploads = comps.length
+    ? (() => {
+        const lastC = comps[0], last = new Date(lastC.last_upload_at);
+        const day = mdy(last) === mdy(now) ? "today" : mdy(last);
+        let out = `Last upload ${hhmm(last)} from ${esc(lastC.name)}, ${day} UTC.`;
+        if (comps.length > 1) { const a = new Date(comps[1].last_upload_at); out += ` ${esc(comps[1].name)} last uploaded at ${hhmm(a)}.`; }
+        return out;
+      })()
+    : "No upload yet.";
+  let aside;
+  if (t.priced) {
+    aside = `<div class="big cond">${money(t.saved)}</div>
+      <p><b>Estimated saving ${whenSaved}.</b> Every job priced at API rates, minus its price on the plan that ran it.</p>
+      <p class="m">${uploads}</p>`;
   } else {
-    const last = new Date(comps[0].last_upload_at);
-    const day = mdy(last) === mdy(now) ? "Today" : mdy(last);
-    side = `<div class="big">${hhmm(last)}</div><p><b>Last upload, ${esc(comps[0].name)}.</b> ${day}, UTC.</p>` +
-      comps.slice(1).map((c) => { const at = new Date(c.last_upload_at); return `<p>${esc(c.name)} last uploaded ${mdy(at)} at ${hhmm(at)}.</p>`; }).join("");
+    const big = comps.length ? hhmm(new Date(comps[0].last_upload_at)) : "--:--";
+    aside = `<div class="big cond">${big}</div>
+      <p><b>${comps.length ? `Last upload from ${esc(comps[0].name)}.` : "No upload yet."}</b></p>
+      <p class="m">No saving estimate yet: none of these jobs had a price.</p>`;
   }
-  side += `<p class="m">Computers upload after jobs finish, at most every 15 seconds. This page checks for new uploads every 15 seconds while it's open.</p>`;
-  const saved = t.priced
-    ? `<b>${money(t.saved)} saved</b>, estimated by pricing every job at API rates and comparing with where it ran.`
-    : `No saving estimate yet: none of these jobs had a price.`;
   return `<header class="head">
     <div>
-      <h1>${plural(t.jobs, "job")} ${when}, <span class="${t.missed ? "miss" : ""}">${t.missed} missed</span></h1>
-      <p class="sub">${saved}</p>
-      <p class="fine">${scope}, from ${plural(d.computers.length, "computer")}. A miss is a job that failed or timed out, ran on an unverified reading, or found no plan to take it.</p>
+      <p class="scope">${scope}, from ${plural(d.computers.length, "computer")}</p>
+      <h1 class="cond">${plural(t.jobs, "job")} allocated<br>across ${plural(plans, "plan")}</h1>
+      <p class="sub"><b>Allo</b>cate usage across your plans based on how much of each limit remains.</p>
+      <div class="stats">
+        <div><b class="cond">${t.jobs}</b>jobs</div>
+        <div><b class="cond">${t.ran}</b>ran</div>
+        <div class="${t.missed ? "miss" : ""}"><b class="cond">${t.missed}</b>missed</div>
+      </div>
     </div>
-    <div class="side">${side}</div>
+    <aside class="side">${aside}</aside>
   </header>`;
+}
+
+// The allocation strip: a stacked bar of each plan's share of jobs, with per-plan totals. Real data only.
+function allocation(d, lines) {
+  const total = d.totals.jobs || 1;
+  const bar = lines.map((l) => {
+    const pct = (l.jobs / total) * 100;
+    return `<span class="${l.pool ? "" : "alloc-none"}" style="width:${pct.toFixed(2)}%;background:${l.color}" title="${esc(l.name)}: ${l.jobs} of ${d.totals.jobs}"></span>`;
+  }).join("");
+  const keys = lines.map((l) => {
+    const pct = Math.round((l.jobs / total) * 100);
+    const meta = l.pool
+      ? `${plural(l.jobs, "job")} \u00b7 ${pct}%` + (l.priced ? ` \u00b7 ${money(l.saved)} saved` : (l.plan_type === "credit_usd" ? " \u00b7 API price" : ""))
+      : `${plural(l.jobs, "job")} \u00b7 ${pct}% \u00b7 missed, no plan fit`;
+    return `<div><span class="sw" style="background:${l.color}"></span><b${l.pool ? "" : ' class="no"'}>${esc(l.name)}</b><span class="meta">${meta}</span></div>`;
+  }).join("");
+  return `<section class="alloc">
+    <div class="alloc-head"><h2 class="cond">Allocation</h2><p class="intro">Share of the jobs each plan took. Each job goes to the plan with the most of its limit left that may take it.</p></div>
+    <div class="bar">${bar}</div>
+    <div class="alloc-keys">${keys}</div>
+  </section>`;
 }
 
 function ticks(d, X0, X1) {
@@ -101,7 +137,7 @@ function ticks(d, X0, X1) {
 }
 
 function map(d, lines, now) {
-  const X0 = 260, X1 = 1290, GAP = 90, Y0 = 80;
+  const X0 = 260, X1 = 1150, GAP = 90, Y0 = 80;
   const ys = lines.map((_, i) => Y0 + i * GAP);
   const last = ys[ys.length - 1];
   const hubY = (ys[0] + last) / 2;
@@ -136,15 +172,16 @@ function map(d, lines, now) {
     const lab = `Now, ${DAYS[now.getUTCDay()]} ${hhmm(now)}`;
     s += `<text x="${(nowX + (nowX > X1 - 140 ? -6 : 6)).toFixed(1)}" y="20" text-anchor="${nowX > X1 - 140 ? "end" : "start"}" style="font-size:13.5px;font-weight:700;fill:var(--ink)">${lab}</text>`;
   }
+  s += `<text x="1308" y="20" text-anchor="end" class="t-day" style="font-weight:700;fill:var(--ink)">Share of jobs</text>`;
   lines.forEach((l, i) => {
     const y = ys[i];
     const red = l.pool ? "" : ` style="fill:var(--reset-text)"`;
     const counts = `${plural(l.jobs, "job")}${l.missed && l.pool ? `, ${l.missed} missed` : ""}`;
     s += `<text x="262" y="${y - 24}" class="t-name"${red}>${esc(l.name)}<tspan class="t-num" dx="12"${red}>${counts}</tspan></text>`;
-    if (l.pool) {
-      const est = l.plan_type === "credit_usd" ? "runs at API price" : "estimate";
-      s += `<text x="1290" y="${y - 10}" text-anchor="end" class="t-saved">${l.priced ? `${money(l.saved)} saved` : "no estimate"}<tspan class="t-est" dx="6">${est}</tspan></text>`;
-    }
+    const share = Math.round((l.jobs / (d.totals.jobs || 1)) * 100);
+    s += `<text x="1308" y="${y + 6}" text-anchor="end" class="t-share"${red}>${share}%</text>`;
+    const cap = l.pool ? (l.priced ? `${money(l.saved)} saved` : (l.plan_type === "credit_usd" ? "API price" : "no estimate")) : "missed, no plan fit";
+    s += `<text x="1308" y="${y + 26}" text-anchor="end" class="t-est">${cap}</text>`;
     let prevEnd = X0;
     let hidden = 0;
     for (const j of byLine[l.key] || []) {
@@ -244,15 +281,16 @@ function render() {
   const lines = styleLines(data.lines);
   const body = data.computers.length === 0
     ? empty()
-    : (lines.length ? map(data, lines, now) : `<section class="empty"><h2>No jobs in this period</h2><p class="intro">Jobs show up here after <code>run --execute</code> finishes them on a connected computer.</p></section>`) +
+    : (lines.length ? allocation(data, lines) + map(data, lines, now) : `<section class="empty"><h2>No jobs in this period</h2><p class="intro">Jobs show up here after <code>run --execute</code> finishes them on a connected computer.</p></section>`) +
       tables(data, lines) + computers(data);
-  document.getElementById("app").innerHTML = `${nav(data)}${header(data, now)}${body}${about}
+  const note = `<p class="note"><b>Only job numbers, plans, outcomes and estimates reach this page.</b> Job names and everything else stay on your computer; open <code>allo-router dashboard</code> there to see them. Times are UTC.</p>`;
+  document.getElementById("app").innerHTML = `${nav(data)}<div class="wrap">${note}${header(data, now)}${body}${about}
   <footer>
-    <span class="mark">Allo Router</span>
+    <span class="mark ext">Allo Router</span>
     <span class="spots" id="spots" hidden></span>
     <a href="/privacy">Privacy</a>
     <button class="link" id="delete">Delete my account</button>
-  </footer>`;
+  </footer></div>`;
   const sp = data.spots;
   const el = document.getElementById("spots");
   el.innerHTML = sp.left > 0 ? `Free for the first ${sp.limit} users: <b>${sp.left} of ${sp.limit}</b> free spots left` : `All ${sp.limit} free spots are taken`;

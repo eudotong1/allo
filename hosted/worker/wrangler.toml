@@ -2,6 +2,7 @@
 # Local: `npm run dev` (local D1 under .wrangler/, dev login on, no Cloudflare account needed).
 # Nothing here has been deployed. database_id is a placeholder until `wrangler d1 create allo` is run.
 name = "allo-router-app"
+workers_dev = true
 main = "src/index.js"
 compatibility_date = "2026-10-01"
 
@@ -13,7 +14,7 @@ run_worker_first = ["/v1/*", "/auth/*"]
 [[d1_databases]]
 binding = "DB"
 database_name = "allo"
-database_id = "00000000-0000-0000-0000-000000000000"
+database_id = "3d94eae0-d012-4abb-bedb-06627e0f76cd"
 migrations_dir = "migrations"
 
 [vars]
@@ -23,3 +24,7 @@ FREE_SPOTS = "100"
 
 [triggers]
 crons = ["17 4 * * *"]
+
+[[routes]]
+pattern = "app.allorouter.com"
+custom_domain = true
