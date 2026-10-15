@@ -208,7 +208,7 @@ describe("dashboard", () => {
     expect(r.status).toBe(200);
     const d = await r.json();
     expect(d.login).toBe("alice");
-    expect(d.totals).toEqual({ jobs: 3, runs: 4, ran: 2, missed: 2, saved: 5.12, priced: 3, running: 0 });
+    expect(d.totals).toEqual({ jobs: 3, runs: 4, ran: 2, missed: 2, saved: 5.12, priced: 2, running: 0 });
     expect(d.lines.map((l) => [l.pool, l.jobs, l.missed])).toEqual([["pool-1", 1, 1], ["pool-2", 1, 0], [null, 1, 1]]);
     expect(d.computers).toMatchObject([{ name: "computer-1", jobs: 3 }]);
     expect(d.spots.left).toBe(99);

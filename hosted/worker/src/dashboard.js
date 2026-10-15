@@ -61,7 +61,8 @@ export function summarize(rows, installs, now = new Date()) {
         t.jobs += 1;
         if (ran) t.ran += 1;
         if (missed) t.missed += 1;
-        if (typeof r.est_saved_usd === "number") { t.saved += r.est_saved_usd; t.priced += 1; }
+        // API value (est.): only real, positive costs; orchestrator rows mirror other plans' work and are left out.
+        if (typeof r.est_saved_usd === "number" && r.est_saved_usd > 0 && r.plan_type !== "orchestrator") { t.saved += r.est_saved_usd; t.priced += 1; }
       }
     } else {
       line.running += 1;

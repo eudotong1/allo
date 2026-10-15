@@ -140,8 +140,8 @@ def test_values(tmp_path):
     assert (credit["plan_type"], credit["provider"]) == ("credit_usd", "api")
     assert (timeout["plan_type"], timeout["provider"]) == ("subscription", "codex")  # from its sync source
     assert (unassigned["plan_type"], unassigned["provider"]) == (None, None)
-    # the report's estimate: reported cost on a subscription saves all of it; API credit saves nothing
-    assert ok["est_saved_usd"] == 4.12 and credit["est_saved_usd"] == 0.0 and timeout["est_saved_usd"] == 2.0
+    # API value (est.): only a cost the CLI reported; est_usd guesses are never sent
+    assert ok["est_saved_usd"] == 4.12 and credit["est_saved_usd"] is None and timeout["est_saved_usd"] is None
     assert unassigned["est_saved_usd"] is None
     assert ok["miss"] == [] and credit["miss"] == []
     assert timeout["miss"] == ["timeout", "unverified-reading"]

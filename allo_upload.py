@@ -260,11 +260,11 @@ def build_payload(entries, cfg, salt, pools, now, est_now=None):
         status = e.get("status") if e.get("status") in STATUSES else None
         if status is None:
             continue
-        saved = None
+        saved = None  # API value (est.): only a cost the CLI itself reported, never a guess
         if status in allo_report.STARTED:
-            basis, _ = allo_report.cost_basis(e, est_now or {})
-            if basis is not None:
-                saved = round(basis * (prices.base - prices.factor(pid)), 2)
+            cost = (e.get("usage") or {}).get("cost_usd")
+            if isinstance(cost, (int, float)) and not isinstance(cost, bool) and cost > 0:
+                saved = round(float(cost), 4)
         skip = None
         if status == "skipped":
             skip = e.get("skip_kind") if e.get("skip_kind") in SKIPS else "other"
