@@ -370,3 +370,12 @@ describe("task runs", () => {
     expect(t.list.map((r) => [r.at, r.end, r.usd])).toEqual([["2026-10-15T06:00Z", "2026-10-15T06:01Z", null], ["2026-10-15T05:00Z", "2026-10-15T05:07Z", 0.5]]);
   });
 });
+
+describe("untitled", () => {
+  it("groups untitled runs on a plan into one Untitled runs task", () => {
+    const base = { install_id: 1, status: "ok", miss: "[]", pool: "pool-3", provider: "codex", plan_type: "subscription", title: null };
+    const rows = [1, 2, 3].map((i) => ({ ...base, id: `u${i}`, at: `2026-10-15T05:0${i}Z` }));
+    const d = summarize(rows, [{ id: 1, name: "c" }], new Date("2026-10-15T07:00:00Z"));
+    expect(d.jobs.map((t) => [t.title, t.runs])).toEqual([["Untitled runs", 3]]);
+  });
+});

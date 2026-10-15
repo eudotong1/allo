@@ -56,7 +56,7 @@ MISSES = ("failed", "timeout", "error", "unverified-reading", "unassigned", "nee
           "missing-cwd", "other")
 PLAN_TYPES = ("subscription", "credit_usd", "orchestrator", "other")
 PROVIDERS = ("claude", "claude_personal", "claude_team", "codex", "grok", "gemini", "api", "other")
-MODELS = ("opus", "sonnet", "haiku", "gpt-5", "gpt-5-codex", "o3", "o4-mini", "other")
+MODELS = ("opus", "sonnet", "haiku", "gpt-5", "gpt-5-codex", "o3", "o4-mini", "gpt-6.1-sol", "gpt-6-sol", "gpt-5.3-codex", "other")
 EFFORTS = ("low", "medium", "high", "very_high", "xhigh")
 TITLE_OK = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 ._\-/:#]{0,47}$")
 MINUTE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}Z$")

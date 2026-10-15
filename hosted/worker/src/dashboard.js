@@ -88,7 +88,7 @@ export function summarize(rows, installs, now = new Date()) {
   // Collapse repeat runs of the same task on the same plan into one task with a run count.
   const groups = new Map();
   for (const j of jobs) {
-    const k = j.title ? `${j.line}|${j.title}` : `${j.line}|#${j.n}`; // untitled jobs are never merged
+    const k = `${j.line}|${j.title || ""}`; // untitled runs on a plan share one "Untitled runs" group
     const g = groups.get(k);
     const one = { at: j.at, end: j.status === "running" ? null : j.heartbeat_at, status: j.status, usd: j.usd };
     if (!g) { groups.set(k, { ...j, list: [one], usd_total: j.usd || 0, priced: j.usd ? 1 : 0, runs: 1, ok: j.status === "ok" ? 1 : 0, failed: j.status === "ok" || j.status === "running" ? 0 : 1, first_at: j.at }); continue; }
@@ -101,7 +101,7 @@ export function summarize(rows, installs, now = new Date()) {
     if (j.miss.length) g.miss = j.miss;
   }
   const tasks = [...groups.values()].sort((a, b) => a.at.localeCompare(b.at));
-  tasks.forEach((t, i) => { t.n = i + 1; t.usd_total = t.priced ? Math.round(t.usd_total * 100) / 100 : null; t.list.sort((a, b) => b.at.localeCompare(a.at)); });
+  tasks.forEach((t, i) => { t.n = i + 1; if (!t.title && t.runs > 1) t.title = "Untitled runs"; t.usd_total = t.priced ? Math.round(t.usd_total * 100) / 100 : null; t.list.sort((a, b) => b.at.localeCompare(a.at)); });
   const orch = new Set(ordered.filter((l) => l.plan_type === "orchestrator").map((l) => l.key));
   for (const l of ordered) { l.runs = l.jobs; const mine = tasks.filter((t) => t.line === l.key && t.status !== "running"); l.jobs = mine.length; l.ran = mine.filter((t) => t.ok > 0).length; }
   // Orchestrator (Grok Bot) rows mirror the work it hands to another plan, so they are not counted twice.

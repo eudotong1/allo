@@ -14,7 +14,10 @@ const PROVIDER = {
   claude: "Claude", claude_personal: "Claude Personal", claude_team: "Claude Team",
   codex: "ChatGPT", chatgpt: "ChatGPT", grok: "Grok Bot", gemini: "Gemini", api: "API credit", other: "Other",
 };
+// "gpt-6.1-sol" -> "GPT-6.1 Sol" for display; ids stay as sent.
+const modelName = (m) => (m ? m.replace(/^gpt-/i, "GPT-").replace(/-([a-z])([a-z]*)$/, (_, a, b) => " " + a.toUpperCase() + b) : m);
 const MODEL_COLOR = {
+  "gpt-6.1-sol": "#1f4fd8",
   opus: "#6A4C93", sonnet: "#0F7C8C", haiku: "#2E7D32",
   "gpt-5": "var(--codex)", "gpt-5-codex": "var(--codex)", o3: "#B5651D", "o4-mini": "#8C2F39", other: "var(--other)",
 };
@@ -65,7 +68,7 @@ function styleLines(lines) {
 }
 
 function chipLabel(j) {
-  if (chipMode === "model" && j.model) return j.model;
+  if (chipMode === "model" && j.model) return modelName(j.model);
   if (chipMode === "effort" && j.effort) return j.effort.replace("_", " ");
   if (j.title) {
     const t = j.title.length > 18 ? j.title.slice(0, 16) + "…" : j.title;
@@ -386,7 +389,7 @@ function jobsSection(d, lines) {
         `<div class="run" role="row"><span>${when(r.at)}</span><span class="st st-${esc(r.status)}">${esc(r.status)}</span><span>${r.status === "running" ? "running" : dur(r.at, r.end)}</span><span class="r">${usdOr(r.usd)}</span></div>`).join("") + more(tk, t.list.length) : "";
       return `<details class="task" data-k="${esc(tk)}"${openKeys.has(tk) ? " open" : ""}><summary>` +
         `<span class="tname">${esc(t.title || "Untitled #" + t.n)}</span><span class="r">${t.runs}</span>` +
-        `<span>${esc(t.model || "n/a")}</span><span>${esc((t.effort || "n/a").replace("_", " "))}</span>` +
+        `<span>${esc(modelName(t.model) || "n/a")}</span><span>${esc((t.effort || "n/a").replace("_", " "))}</span>` +
         `<span class="r">${usdOr(t.usd_total)}</span><span>${when(t.first_at)}</span><span>${when(t.at)}</span></summary>` +
         `<div class="runs"><div class="run h" role="row"><span>Started (UTC)</span><span>Status</span><span>Duration</span><span class="r">API value (est.)</span></div>${runs}</div></details>`;
     }).join("");

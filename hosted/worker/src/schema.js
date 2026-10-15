@@ -11,7 +11,7 @@ export const SKIPS = ["unassigned", "needs-reading", "already-ran", "bad-run-blo
 export const MISSES = ["failed", "timeout", "error", "unverified-reading", "unassigned", "needs-reading", "bad-run-block", "missing-cwd", "other"];
 export const PLAN_TYPES = ["subscription", "credit_usd", "orchestrator", "other"];
 export const PROVIDERS = ["claude", "claude_personal", "claude_team", "codex", "grok", "gemini", "api", "other"];
-export const MODELS = ["opus", "sonnet", "haiku", "gpt-5", "gpt-5-codex", "o3", "o4-mini", "other"];
+export const MODELS = ["opus", "sonnet", "haiku", "gpt-5", "gpt-5-codex", "o3", "o4-mini", "gpt-6.1-sol", "gpt-6-sol", "gpt-5.3-codex", "other"];
 export const EFFORTS = ["low", "medium", "high", "very_high", "xhigh"];
 
 const MINUTE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}Z$/;

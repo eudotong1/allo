@@ -26,3 +26,15 @@ def test_codex_run_value_matches_lane_dir_and_skips_unpriced(tmp_path):
     write("c", "/lane", None)  # out-of-credits restart: no usage
     assert L.codex_run_value("/lane", started, started, root=tmp_path) == 0.002
     assert L.codex_run_value("/nowhere", started, started, root=tmp_path) is None
+
+
+def test_codex_run_info_reports_the_session_model(tmp_path):
+    started = datetime(2026, 10, 15, 12, 0, tzinfo=timezone.utc)
+    loc = started.astimezone()
+    d = tmp_path / f"{loc.year:04d}" / f"{loc.month:02d}" / f"{loc.day:02d}"
+    d.mkdir(parents=True)
+    lines = [{"type": "session_meta", "payload": {"cwd": "/lane"}},
+             {"type": "turn_context", "payload": {"model": "gpt-6.1-sol"}}]
+    (d / f"rollout-{loc.strftime('%Y-%m-%dT%H-%M-%S')}-x.jsonl").write_text("\n".join(json.dumps(x) for x in lines))
+    assert L.codex_run_info("/lane", started, started, root=tmp_path) == (None, "gpt-6.1-sol")
+    assert L.codex_run_info("/none", started, started, root=tmp_path) == (None, None)
