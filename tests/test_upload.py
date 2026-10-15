@@ -214,6 +214,14 @@ def test_allowlist_matches_the_server(tmp_path):
     assert f"export const MAX_ROWS = {up.MAX_ROWS};" in js
 
 
+def test_landing_page_counter_is_fetched_never_hardcoded():
+    """The "X of 100 free spots left" on allorouter.com comes from the server's real count, hidden until it loads."""
+    html = (ROOT / "docs" / "index.html").read_text()
+    assert html.count("data-spots hidden") == 2
+    assert '"/v1/spots"' in html and ".catch(function () {})" in html
+    assert not re.search(r"\d+\s*(</b>)?\s*of\s*(<b>)?\s*\d+\s*(</b>)?\s*free spots", html)
+
+
 # ---------- off by default ----------
 
 def test_upload_is_off_until_connect(tmp_path):

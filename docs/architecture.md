@@ -1,6 +1,6 @@
 # Architecture
 
-Allo Router is five stdlib-only Python modules (plus `allo_dash_page.py`, the dashboard's HTML) and two JSON files you own.
+Allo Router is six stdlib-only Python modules (plus `allo_dash_page.py`, the dashboard's HTML) and two JSON files you own. One of them, `allo_upload.py`, is the opt-in upload to the hosted dashboard; it is off by default and is the only module that opens a connection.
 
     ~/.claude, ~/.codex ──> allo_sync.py: sync ──> readings in pools.json                       (allo-router sync)
     pools.json ─┐                         ┌─> printed plan                                   (allo-router)
@@ -17,6 +17,8 @@ Allo Router is five stdlib-only Python modules (plus `allo_dash_page.py`, the da
 
     pools.json, tasks.json, plan.json, runs.jsonl, runs/current.json, ~/Library/LaunchAgents
         ──> allo_dash.py: build_state ──> JSON ──> page on 127.0.0.1           (allo-router dashboard)
+
+    runs.jsonl ──> allo_upload.py: build_payload (allowlist) ──> POST app.allorouter.com/v1/jobs   (only after allo-router connect)
 
 ## allo.py: the planner
 Pure functions over the two files. It never imports `subprocess`, `socket` or anything that reaches out; a test checks this.
@@ -119,6 +121,13 @@ While a non-dry-run job runs, `run_jobs` writes `runs/current.json` (task id and
 
 `serve` binds `ThreadingHTTPServer` to `127.0.0.1` only. `respond(method, path, host, port, ...)` is a pure function, so tests cover it without a socket: it refuses any `Host` other than `127.0.0.1:PORT` or `localhost:PORT` (403, against DNS rebinding), anything but GET or HEAD (405), and serves `/`, `/api/state` and `/fonts/NAME.woff2` from `docs/fonts` when that folder exists (a checkout or editable install). The page is in `allo_dash_page.py` so it ships with a plain install; it falls back to system fonts without `docs/fonts`.
 
+## allo_upload.py: the opt-in upload
+Off until `allo-router connect` has approved this computer (a device code shown in the terminal and approved in the browser). The upload token, a random salt and the pool numbering are kept in `~/.config/allo-router/connect.json` (mode 0600), outside the router folder; the server stores only the token's SHA-256.
+
+`build_payload` copies named fields into a new object, one job at a time: `id` (`h:` plus 16 hex of an HMAC of the task id with the local salt), `at` (rounded to the minute), `pool` (`pool-N`, never the id you typed), `plan_type`, `provider`, `status`, `skip` and `miss` (enums) and `est_saved_usd` (the report's estimate). `check_payload` checks the result against the same allowlist before anything is sent, and the server (`hosted/worker/src/schema.js`) rejects any payload with another key or value. A test keeps the two lists equal. `connect --show` prints the next payload and sends nothing.
+
+`AfterJobs` is what `run --execute` calls after each line it writes to `runs.jsonl`: it uploads new lines at most once every 15 seconds and once at the end, and never raises. A local cursor tracks what was sent; a failed upload leaves the lines for the next one. `disconnect` revokes the token on the server (deleting that computer's rows unless `--keep-history`) and forgets it locally even if the server is unreachable.
+
 ## allo_report.py: the report
 `cmd_report` reads `runs.jsonl` (unreadable lines are counted and skipped), filters by `--since`/`--until`, groups by `--period`, and prints markdown: a summary per period, the MEASURED plan use from `plan_usage` (per pool and per job, with CLI-reported tokens), the usage-saved ESTIMATE with its method, misroutes, and one row per job. The two never mix: the estimate does not read `plan_usage`. `--csv FILE` writes the same rows with every derived column. It reads `pools.json` for pool kinds and `tasks.json` for `est_usd` of old entries when they exist, and needs neither. It imports neither `allo_exec` nor anything that starts processes; a test checks this.
 
@@ -147,8 +156,8 @@ Built in:
 
 ## What is deliberately missing
 - The executor never edits `pools.json` or `tasks.json`. Usage readings come only from files the provider's own software writes; where none gives a limit, the reading is PARTIAL or UNAVAILABLE, never estimated.
-- No outbound network code anywhere. The dashboard only listens, on 127.0.0.1. Any network use happens inside the CLI you configure, under that CLI's own login.
+- No outbound network code outside `allo_upload.py`, which does nothing until you run `allo-router connect`, and then sends only the allowlisted summary numbers above. A test checks the other modules import no network code. The local dashboard only listens, on 127.0.0.1. Any other network use happens inside the CLI you configure, under that CLI's own login.
 - No secrets in config. The CLI you call should already be authenticated.
 
 ## Tests
-`tests/test_allo.py` covers the planner and the CLI. `tests/test_exec.py` covers the executor with local `python -c` commands standing in for real CLIs. `tests/test_report.py` covers the report and what the executor logs for it, again with `python -c` stand-ins that print `claude`- and `codex`-style usage JSON. `tests/test_sync.py` covers sync, auto-sync, readings around jobs, the measured report section and recurring jobs, with fake `~/.claude` and `~/.codex` folders (HOME points at an empty temp folder, so the real ones are never read). `tests/test_refresh.py` covers `run --refresh` and the running marker. `tests/test_dash.py` covers the dashboard's state, launchd discovery and schedule maths, that it writes nothing and never syncs, the example data, and the request handler. `tests/conftest.py` blocks socket connections and DNS for every test.
+`tests/test_allo.py` covers the planner and the CLI. `tests/test_exec.py` covers the executor with local `python -c` commands standing in for real CLIs. `tests/test_report.py` covers the report and what the executor logs for it, again with `python -c` stand-ins that print `claude`- and `codex`-style usage JSON. `tests/test_sync.py` covers sync, auto-sync, readings around jobs, the measured report section and recurring jobs, with fake `~/.claude` and `~/.codex` folders (HOME points at an empty temp folder, so the real ones are never read). `tests/test_refresh.py` covers `run --refresh` and the running marker. `tests/test_dash.py` covers the dashboard's state, launchd discovery and schedule maths, that it writes nothing and never syncs, the example data, and the request handler. `tests/test_upload.py` covers the upload: the payload holds only allowlisted keys, a canary task name, path and output never appear in it, no reading or "% left" field, the allowlist matches the server's, the device flow, the 15-second debounce, and that nothing is sent before `connect`; its transport is a stub. `tests/conftest.py` blocks socket connections and DNS for every test.
