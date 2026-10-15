@@ -22,6 +22,8 @@ Readings can be typed in with `set` or read from local files with `sync` (allo_s
   allo-router connect --show       print exactly what the next upload would send, and send nothing
   allo-router upload               send new job rows now (only once connected)
   allo-router disconnect           revoke the upload token and delete this computer's history on the server
+  allo-router live                 upload running lane / Grok Bot dispatch events (see allo_live.py)
+  allo-router live --watch         keep heartbeating every few seconds
   allo-router --dir examples       use another folder
   allo-router --no-sync            do not auto-sync before printing or previewing a plan
   allo-router --version            print the version
@@ -266,7 +268,7 @@ def propose(tasks, rows, tiers, opts):
             else:
                 out.append((t, None, "", elig))
             continue
-        cand = [r for r in rows if r["p"]["id"] in elig and r["p"]["kind"] != "credit_usd"
+        cand = [r for r in rows if r["p"]["id"] in elig and r["p"]["kind"] not in ("credit_usd", "orchestrator")
                 and rank[t["tier"]] <= rank[sub_max_tier] and (r["left"] is None or r["left"] >= min_headroom)]
         cand.sort(key=lambda r: (r["left"] is None, -(r["left"] or 0)))
         if cand:
@@ -374,7 +376,7 @@ def cmd_init(here):
     print("wrote pools.json and tasks.json. Edit them to match your plans, then run: allo-router")
 
 
-OWN_HELP = ("run", "report", "sync", "dashboard", "connect", "upload", "disconnect")
+OWN_HELP = ("run", "report", "sync", "dashboard", "connect", "upload", "disconnect", "live")
 
 
 def main(argv):
@@ -427,6 +429,9 @@ def main(argv):
             cmd = {"connect": allo_upload.cmd_connect, "upload": allo_upload.cmd_upload,
                    "disconnect": allo_upload.cmd_disconnect}[argv[0]]
             sys.exit(cmd(here, argv[1:], datetime.now(timezone.utc)))
+        elif argv and argv[0] == "live":
+            import allo_live
+            sys.exit(allo_live.cmd_live(argv[1:]))
         else:
             if autosync and not argv:
                 import allo_sync

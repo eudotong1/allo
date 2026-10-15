@@ -34,7 +34,7 @@ async function connectComputer(cookie, name = "Studio Mac") {
 function job(over = {}) {
   return {
     id: "h:0123456789abcdef", at: "2026-10-13T03:00Z", pool: "pool-1", plan_type: "subscription", provider: "codex",
-    status: "ok", skip: null, miss: [], est_saved_usd: 4.12, title: "Sample job", model: "gpt-5-codex", effort: "high", ...over,
+    status: "ok", skip: null, miss: [], est_saved_usd: 4.12, title: "Sample job", model: "gpt-5-codex", effort: "high", heartbeat_at: null, ...over,
   };
 }
 const payload = (jobs) => ({ schema: 1, sent_at: "2026-10-13T03:05Z", jobs });
@@ -208,7 +208,7 @@ describe("dashboard", () => {
     expect(r.status).toBe(200);
     const d = await r.json();
     expect(d.login).toBe("alice");
-    expect(d.totals).toEqual({ jobs: 4, ran: 2, missed: 2, saved: 5.12, priced: 3 });
+    expect(d.totals).toEqual({ jobs: 4, ran: 2, missed: 2, saved: 5.12, priced: 3, running: 0 });
     expect(d.lines.map((l) => [l.pool, l.jobs, l.missed])).toEqual([["pool-1", 2, 1], ["pool-2", 1, 0], [null, 1, 1]]);
     expect(d.computers).toMatchObject([{ name: "computer-1", jobs: 4 }]);
     expect(d.spots.left).toBe(99);

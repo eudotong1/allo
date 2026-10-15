@@ -337,13 +337,14 @@ async function uploadJobs(request, env) {
   if (!fresh && inst.window_count >= UPLOADS_PER_HOUR) return error(429, "rate_limited");
   const stmts = body.jobs.map((j) =>
     env.DB.prepare(
-      "INSERT INTO jobs (install_id, id, user_id, at, pool, plan_type, provider, status, skip, miss, est_saved_usd, title, model, effort) " +
-      "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) " +
+      "INSERT INTO jobs (install_id, id, user_id, at, pool, plan_type, provider, status, skip, miss, est_saved_usd, title, model, effort, heartbeat_at) " +
+      "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) " +
       "ON CONFLICT(install_id, id) DO UPDATE SET pool=excluded.pool, plan_type=excluded.plan_type, " +
       "provider=excluded.provider, status=excluded.status, skip=excluded.skip, miss=excluded.miss, " +
-      "est_saved_usd=excluded.est_saved_usd, title=excluded.title, model=excluded.model, effort=excluded.effort",
+      "est_saved_usd=excluded.est_saved_usd, title=excluded.title, model=excluded.model, effort=excluded.effort, " +
+      "heartbeat_at=excluded.heartbeat_at",
     ).bind(inst.id, j.id, inst.user_id, j.at, j.pool, j.plan_type, j.provider, j.status, j.skip, JSON.stringify(j.miss),
-           j.est_saved_usd, j.title, j.model, j.effort),
+           j.est_saved_usd, j.title, j.model, j.effort, j.heartbeat_at),
   );
   stmts.push(
     env.DB.prepare("UPDATE installs SET last_upload_at = ?, window_start = ?, window_count = ? WHERE id = ?")
@@ -374,12 +375,12 @@ async function dashboard(request, env, user, url) {
   const [installs, rows, spotInfo] = await Promise.all([
     env.DB.prepare("SELECT id, name, created_at, last_upload_at FROM installs WHERE user_id = ? AND revoked_at IS NULL AND token_hash IS NOT NULL ORDER BY created_at")
       .bind(user.id).all().then((r) => r.results),
-    env.DB.prepare("SELECT install_id, id, at, pool, plan_type, provider, status, skip, miss, est_saved_usd, title, model, effort FROM jobs " +
+    env.DB.prepare("SELECT install_id, id, at, pool, plan_type, provider, status, skip, miss, est_saved_usd, title, model, effort, heartbeat_at FROM jobs " +
       "WHERE user_id = ? AND at >= ? AND at < ? ORDER BY at, install_id, id LIMIT 5000")
       .bind(user.id, minuteKey(range.start), minuteKey(range.end)).all().then((r) => r.results),
     spots(env),
   ]);
-  const s = summarize(rows, installs);
+  const s = summarize(rows, installs, new Date());
   const perInstall = {};
   for (const j of s.jobs) perInstall[j.computer] = (perInstall[j.computer] || 0) + 1;
   const computers = installs.map((i) => ({
