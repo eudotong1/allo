@@ -355,3 +355,27 @@ describe("collapse", () => {
     expect(d.jobs.map((j) => [j.title, j.runs])).toEqual([["E2E tests", 3], ["Dispatch E2E tests", 3]]);
   });
 });
+
+describe("task runs", () => {
+  it("lists each run under its task, newest first, with API value only when real", () => {
+    const base = { install_id: 1, status: "ok", miss: "[]", pool: "pool-3", provider: "codex", plan_type: "subscription", title: "Docs" };
+    const rows = [
+      { ...base, id: "a", at: "2026-10-15T05:00Z", heartbeat_at: "2026-10-15T05:07Z", est_saved_usd: 0.5 },
+      { ...base, id: "b", at: "2026-10-15T06:00Z", heartbeat_at: "2026-10-15T06:01Z", est_saved_usd: 0 },
+    ];
+    const d = summarize(rows, [{ id: 1, name: "c" }], new Date("2026-10-15T07:00:00Z"));
+    const t = d.jobs[0];
+    expect(t.runs).toBe(2);
+    expect(t.usd_total).toBe(0.5);
+    expect(t.list.map((r) => [r.at, r.end, r.usd])).toEqual([["2026-10-15T06:00Z", "2026-10-15T06:01Z", null], ["2026-10-15T05:00Z", "2026-10-15T05:07Z", 0.5]]);
+  });
+});
+
+describe("untitled", () => {
+  it("groups untitled runs on a plan into one Untitled runs task", () => {
+    const base = { install_id: 1, status: "ok", miss: "[]", pool: "pool-3", provider: "codex", plan_type: "subscription", title: null };
+    const rows = [1, 2, 3].map((i) => ({ ...base, id: `u${i}`, at: `2026-10-15T05:0${i}Z` }));
+    const d = summarize(rows, [{ id: 1, name: "c" }], new Date("2026-10-15T07:00:00Z"));
+    expect(d.jobs.map((t) => [t.title, t.runs])).toEqual([["Untitled runs", 3]]);
+  });
+});

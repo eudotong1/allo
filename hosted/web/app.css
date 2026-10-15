@@ -212,3 +212,29 @@ button.link { font: inherit; color: inherit; background: none; border: 0; paddin
   0%, 100% { opacity: 1; }
   50% { opacity: 0.72; }
 }
+
+/* Jobs: pools -> tasks -> runs */
+.chip-modes .jump { margin-left: auto; font-weight: 700; color: var(--ink); text-decoration: underline; }
+svg .more a, svg a .more { fill: var(--ink); text-decoration: underline; }
+section.jobs { padding: 40px 0; border-bottom: 1px solid var(--rule); }
+.jobs-head { display: flex; align-items: baseline; gap: 24px; margin-bottom: 16px; }
+details.pool { border-top: 1px solid var(--rule); }
+details.pool > summary { list-style: none; cursor: pointer; display: flex; align-items: center; gap: 12px; padding: 14px 0; font-size: 17px; }
+details > summary::-webkit-details-marker { display: none; }
+details.pool > summary .sw { width: 16px; height: 10px; display: inline-block; }
+details.pool > summary .meta { color: var(--reset-text, #666); }
+details.pool > summary .chev { margin-left: auto; transition: transform .15s; }
+details.pool[open] > summary .chev { transform: rotate(90deg); }
+.task-h, details.task > summary { display: grid; grid-template-columns: minmax(0, 2.2fr) 60px 1fr 80px 110px 110px 110px; gap: 12px; align-items: center; padding: 8px 0 8px 28px; font-size: 14.5px; }
+.task-h { font-weight: 700; border-bottom: 1px solid var(--rule); }
+details.task > summary { list-style: none; cursor: pointer; border-bottom: 1px solid var(--rule); }
+details.task > summary .tname::before { content: "▸ "; }
+details.task[open] > summary .tname::before { content: "▾ "; }
+details.task > summary:hover { background: rgba(0,0,0,.03); }
+.runs { padding: 4px 0 12px 56px; }
+.run { display: grid; grid-template-columns: 130px 90px 90px 130px; gap: 12px; padding: 4px 0; font-size: 13.5px; border-bottom: 1px dotted var(--rule); }
+.run.h { font-weight: 700; }
+.r { text-align: right; }
+.st-failed, .st-timeout, .st-error { color: var(--reset-text); font-weight: 700; }
+.st-running { font-weight: 700; }
+.more-btn { margin: 10px 0 10px 28px; padding: 6px 12px; border: 1px solid var(--ink); background: var(--paper); cursor: pointer; font: inherit; }

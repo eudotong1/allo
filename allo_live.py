@@ -160,18 +160,22 @@ def _folder_index(folder: Path):
     return out
 
 
-def codex_run_value(lane_dir, started: datetime, ended: datetime, root: Path | None = None, next_start: datetime | None = None):
+def codex_run_value(lane_dir, started, ended, root=None, next_start=None):
+    return codex_run_info(lane_dir, started, ended, root=root, next_start=next_start)[0]
+
+
+def codex_run_info(lane_dir, started: datetime, ended: datetime, root: Path | None = None, next_start: datetime | None = None):
     """API value of the Codex sessions that started in lane_dir between this run's start minute and the end of
     its end minute, stopping before the lane's next start minute so a session is never priced on two runs.
     None when no session reported token usage."""
     root = root or CODEX_SESSIONS
     if not lane_dir:
-        return None
+        return None, None
     lo = started.replace(second=0, microsecond=0).timestamp()
     hi = ended.replace(second=0, microsecond=0).timestamp() + 59
     if next_start is not None:
         hi = min(hi, next_start.replace(second=0, microsecond=0).timestamp() - 1)
-    total, any_priced = 0.0, False
+    total, any_priced, model = 0.0, False, None
     for d in sorted({started.astimezone().date(), ended.astimezone().date()}):
         folder = root / f"{d.year:04d}" / f"{d.month:02d}" / f"{d.day:02d}"
         for t, p in _folder_index(folder):
@@ -180,11 +184,12 @@ def codex_run_value(lane_dir, started: datetime, ended: datetime, root: Path | N
             info = read_session(p)
             if not info or info[0] != lane_dir:
                 continue
+            model = info[1] or model  # the model Codex actually ran, as the session recorded it
             v = api_value(info[1], info[2])
             if v is not None:
                 total += v
                 any_priced = True
-    return round(total, 4) if any_priced else None
+    return (round(total, 4) if any_priced else None), model
 
 
 def launchctl_running() -> dict[str, int]:
@@ -277,7 +282,7 @@ def build_live_jobs(state, now: datetime, router_dirs: list[Path], *, backfill: 
         status = "ok" if (e["exit"] is None or e["exit"] == 0) else "failed"
         title_g = f"Dispatch {LANE_TITLES.get(e['lane'], e['lane'])}"
         title_c = LANE_TITLES.get(e["lane"], e["lane"])
-        value = codex_run_value((start or {}).get("dir"), started, e["at"],
+        value, real_model = codex_run_info((start or {}).get("dir"), started, e["at"],
                                 next_start=next_start.get(id(start)) if start else None)
         jobs.append(job_row(
             id=hid(salt, ["grok-dispatch", e["lane"], utc_minute(started)]),
@@ -287,7 +292,8 @@ def build_live_jobs(state, now: datetime, router_dirs: list[Path], *, backfill: 
         jobs.append(job_row(
             id=hid(salt, ["codex-lane", e["lane"], utc_minute(started)]),
             at=utc_minute(started), pool=pool_ref(state, "chatgpt"), plan_type="subscription",
-            provider="codex", status=status, title=title_c, model="gpt-5-codex", effort="high",
+            provider="codex", status=status, title=title_c,
+            model=(real_model if real_model in up.MODELS else ("other" if real_model else None)), effort="high",
             heartbeat_at=stamp, api_usd=value,
         ))
         newest = stamp if (newest is None or stamp > newest) else newest
@@ -307,7 +313,7 @@ def build_live_jobs(state, now: datetime, router_dirs: list[Path], *, backfill: 
         jobs.append(job_row(
             id=hid(salt, ["codex-lane", lane, utc_minute(started)]),
             at=utc_minute(started), pool=pool_ref(state, "chatgpt"), plan_type="subscription",
-            provider="codex", status="running", title=title_c, model="gpt-5-codex", effort="high",
+            provider="codex", status="running", title=title_c, model=None, effort="high",
             heartbeat_at=utc_minute(now),
         ))
 
