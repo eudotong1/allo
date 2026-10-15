@@ -1,6 +1,6 @@
 # Allo Router hosted dashboard: plan
 
-Updated: 10/14/2026. Status: Phase 1 planning only. Nothing deployed, no accounts created.
+Updated: 10/15/2026. Status: Phases 2 to 4 built and tested locally (see [README.md](README.md) to run it). Nothing deployed, no accounts created. Where this plan and the code differ, the code wins: the module is `allo_upload.py` (not `allo_connect.py`), job fields are `id, at, pool, plan_type, provider, status, skip, miss, est_saved_usd` with `schema` and `sent_at` on top (`hosted/worker/src/schema.js`), job ids are always hashed and pools are always `pool-N`, and the web app is served by the same Worker as static assets rather than a separate Pages project. Added since: free for the first 100 users then a waitlist, and live updates (15 s polling with ETag/304).
 Mockup: [mockup.html](mockup.html), [mockup.png](mockup.png). Prices are from memory, not checked online: [VERIFY] before spending.
 
 ## What it is
@@ -9,11 +9,11 @@ An opt-in page at `app.allorouter.com` showing what the router did across your c
 ## Stack
 - **Cloudflare Workers** for the API (`/v1/*`), **D1** for storage, **Pages** for the static web app. One Worker with static assets would also work and saves a project. Either way it costs nothing at this size.
 - **Sign-in: GitHub OAuth first.** It's free, there's no email deliverability to run, and the users are developers. Add magic-link email (Cloudflare Email Service or Resend) only if non-GitHub users ask for it.
-- **CLI side:** a new stdlib-only module, `allo_connect.py` (`urllib.request`, no dependencies). It is the only module allowed to open a connection.
+- **CLI side:** a new stdlib-only module, `allo_upload.py` (`urllib.request`, no dependencies). It is the only module allowed to open a connection.
 
 ## Architecture
 ```
-runs.jsonl ─> allo_connect.build_upload (pure, allowlist) ─> POST /v1/jobs  (Bearer upload token)
+runs.jsonl ─> allo_upload.build_payload (pure, allowlist) ─> POST /v1/jobs  (Bearer upload token)
                                                                 │ Worker: strict schema check, rate limit
 browser ─> GitHub OAuth ─> session cookie ─> GET /v1/me/*  ─────┴─> D1
 ```
@@ -44,7 +44,7 @@ POST /v1/jobs
 **Never sent:** task names, prompts, commands, code, stdout/stderr, file or folder paths, `reason` text, readings, token counts, reported cost, plan hashes, hostname, username, API keys. `at` and `kind` go beyond the five fields in the brief. Without `at` there's no timeline, and without `kind` the saved figure can't be explained. Cut either if you'd rather not send it.
 The dashboard can't show "% left" because readings aren't sent. That's deliberate. Sending readings could be a separate opt-in later.
 
-Proof, as tests: a canary task (`name: "CANARY-SECRET"`, cwd, a reason, output) where the serialized payload must not contain the canary; the payload key set equals the schema exactly; `conftest.py` keeps blocking sockets, and only `allo_connect`'s tests stub the transport. `allo-router connect --show` prints the exact next payload and sends nothing. Every upload is appended to a local `connect.log` (what was sent, when).
+Proof, as tests: a canary task (`name: "CANARY-SECRET"`, cwd, a reason, output) where the serialized payload must not contain the canary; the payload key set equals the schema exactly; `conftest.py` keeps blocking sockets, and only `allo_upload`'s tests stub the transport. `allo-router connect --show` prints the exact next payload and sends nothing. Every upload is appended to a local `connect.log` (what was sent, when).
 
 ## Connect, disconnect and tokens
 1. `allo-router connect` asks for a name for this computer (default "Computer 1", never the hostname), then starts a device flow: `POST /v1/device` returns a user code. The CLI opens `app.allorouter.com/connect?code=WXYZ-1234`.
@@ -83,4 +83,4 @@ The domain is already held. GitHub OAuth is free.
 4. **Estimates read as facts once they're in the cloud.** Label "estimate" next to every saved figure and link the method, as the report does.
 5. **D1 size limit** (10 GB per database [VERIFY]). Retention and rollups keep 10k users at ~4.5 GB. Shard by user past that.
 6. **Ownership.** Decide which Cloudflare account and GitHub org own the OAuth app before Phase 3. Moving them later breaks every token.
-7. **Publishing.** `docs/` is the public site. Merging this branch to main publishes this plan and the mockup at allorouter.com/hosted/.
+7. **Publishing.** `docs/` is the public site, so this plan and the mockup now live in `plans/hosted/`. Merging this branch publishes the landing page's hosted-dashboard section and counter; merge once the server is live.
