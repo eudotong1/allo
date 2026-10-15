@@ -16,3 +16,10 @@ def no_network(monkeypatch):
     monkeypatch.setattr(socket.socket, "connect_ex", refuse)
     monkeypatch.setattr(socket, "create_connection", refuse)
     monkeypatch.setattr(socket, "getaddrinfo", refuse)
+
+
+@pytest.fixture(autouse=True)
+def isolated_config(tmp_path_factory, monkeypatch):
+    """Point every test (and every subprocess it starts) at an empty config folder, so a computer that ran
+    `allo-router connect` never uploads test jobs to the real dashboard."""
+    monkeypatch.setenv("ALLO_ROUTER_CONFIG_DIR", str(tmp_path_factory.mktemp("allo-config")))
