@@ -351,8 +351,52 @@ describe("collapse", () => {
     const d = summarize(rows, [{ id: 1, name: "c" }], new Date("2026-10-15T06:00:00Z"));
     expect(d.totals.jobs).toBe(1);
     expect(d.totals.runs).toBe(3);
-    expect(d.lines.map((l) => l.pool)).toEqual(["pool-3", "pool-4"]);
-    expect(d.jobs.map((j) => [j.title, j.runs])).toEqual([["E2E tests", 3], ["Dispatch E2E tests", 3]]);
+    expect(d.lines.map((l) => [l.pool, l.jobs])).toEqual([["pool-3", 1], ["pool-4", 0]]);
+    expect(d.jobs.map((j) => [j.title, j.runs, j.dispatched_by])).toEqual([["E2E tests", 3, "grok"]]);
+  });
+
+  it("shows Grok Bot's own unrouted work on its own direct row, counted once", () => {
+    const base = { install_id: 1, status: "ok", miss: "[]", est_saved_usd: 0 };
+    const rows = [
+      { ...base, id: "c", pool: "pool-1", provider: "codex", plan_type: "subscription", title: "Docs", at: "2026-10-15T01:00Z" },
+      { ...base, id: "g", pool: "pool-4", provider: "grok", plan_type: "orchestrator", title: "Dispatch Docs", at: "2026-10-15T01:00Z" },
+      { ...base, id: "d1", pool: "pool-4", provider: "grok", plan_type: "orchestrator", title: "Inbox triage", at: "2026-10-15T02:00Z" },
+      { ...base, id: "d2", pool: "pool-4", provider: "grok", plan_type: "orchestrator", title: "Banner edit", at: "2026-10-15T03:00Z" },
+    ];
+    const d = summarize(rows, [{ id: 1, name: "c" }], new Date("2026-10-15T06:00:00Z"));
+    expect(d.totals.jobs).toBe(3);
+    expect(d.lines.map((l) => [l.provider, l.direct, l.jobs])).toEqual([["grok", true, 2], ["codex", false, 1]]);
+    expect(d.lines.reduce((a, l) => a + l.share, 0)).toBe(100);
+  });
+
+  it("keeps a Grok Bot direct row at 0 when Grok Bot only routed", () => {
+    const base = { install_id: 1, status: "ok", miss: "[]", est_saved_usd: 0 };
+    const rows = [
+      { ...base, id: "c", pool: "pool-1", provider: "codex", plan_type: "subscription", title: "Docs", at: "2026-10-15T01:00Z" },
+      { ...base, id: "g", pool: "pool-4", provider: "grok", plan_type: "orchestrator", title: "Dispatch Docs", at: "2026-10-15T01:00Z" },
+    ];
+    const d = summarize(rows, [{ id: 1, name: "c" }], new Date("2026-10-15T06:00:00Z"));
+    expect(d.lines.map((l) => [l.provider, l.jobs, l.share])).toEqual([["codex", 1, 100], ["grok", 0, 0]]);
+  });
+
+  it("counts each job on one lane only, and shares add up to 100", () => {
+    const base = { install_id: 1, status: "ok", miss: "[]", est_saved_usd: 0 };
+    const rows = [];
+    // Mirrors the bug report: 8 ChatGPT tasks each with a Grok Bot dispatch row, 3 Claude Team, 1 Claude Personal.
+    for (let i = 0; i < 8; i++) {
+      const at = `2026-10-1${i % 5}T0${i}:00Z`;
+      rows.push({ ...base, id: `c${i}`, pool: "pool-1", provider: "codex", plan_type: "subscription", title: `T${i}`, at });
+      rows.push({ ...base, id: `g${i}`, pool: "pool-4", provider: "grok", plan_type: "orchestrator", title: `Dispatch T${i}`, at });
+    }
+    for (let i = 0; i < 3; i++) rows.push({ ...base, id: `t${i}`, pool: "pool-2", provider: "claude_team", plan_type: "subscription", title: `A${i}`, at: `2026-10-15T0${i}:00Z` });
+    rows.push({ ...base, id: "p0", pool: "pool-3", provider: "claude_personal", plan_type: "subscription", title: "R", at: "2026-10-15T09:00Z" });
+    const d = summarize(rows, [{ id: 1, name: "c" }], new Date("2026-10-16T06:00:00Z"));
+    expect(d.lines.map((l) => [l.provider, l.jobs, l.share])).toEqual([["codex", 8, 67], ["claude_team", 3, 25], ["claude_personal", 1, 8], ["grok", 0, 0]]);
+    expect(d.lines.reduce((a, l) => a + l.share, 0)).toBe(100);
+    expect(d.lines.reduce((a, l) => a + l.jobs, 0)).toBe(d.totals.jobs);
+    const seen = new Map();
+    for (const j of d.jobs) for (const r of j.list) { const k = `${j.title}|${r.at}`; expect(seen.has(k)).toBe(false); seen.set(k, j.line); }
+    expect(d.jobs.filter((j) => j.line.endsWith("pool-1")).every((j) => j.dispatched_by === "grok")).toBe(true);
   });
 });
 
