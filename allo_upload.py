@@ -48,6 +48,13 @@ DEBOUNCE_S = 15
 
 # The allowlist. The server holds the same lists (hosted/worker/src/schema.js) and rejects anything else.
 TOP_KEYS = ("schema", "sent_at", "jobs")
+OPTIONAL_TOP_KEYS = ("plans",)
+# One row per plan: its current reading and reset time, so the dashboard can show what is left and when it resets.
+# "how" says where the reading came from: "auto" (allo-router sync read it from the provider's own files) or
+# "manual" (typed in with allo-router set). Nothing here is ever estimated.
+PLAN_KEYS = ("pool", "plan_type", "provider", "left_pct", "left_usd", "resets_at", "window", "as_of", "how")
+WINDOW_NAMES = ("5h", "week")
+HOWS = ("auto", "manual")
 JOB_KEYS = ("id", "at", "pool", "plan_type", "provider", "status", "skip", "miss", "est_saved_usd",
             "title", "model", "effort", "heartbeat_at")
 STATUSES = ("ok", "failed", "timeout", "error", "skipped", "dry-run", "running")
@@ -247,7 +254,7 @@ def misses(e):
     return out
 
 
-def build_payload(entries, cfg, salt, pools, now, est_now=None):
+def build_payload(entries, cfg, salt, pools, now, est_now=None, share_readings=False):
     """The upload for these runs.jsonl entries. Every field is copied into a new dict by name; nothing from an
     entry is passed through whole. `pools` is the local pool numbering and gains any new pool."""
     by_id = {p.get("id"): p for p in (cfg or {}).get("pools", [])}
@@ -285,13 +292,53 @@ def build_payload(entries, cfg, salt, pools, now, est_now=None):
             "heartbeat_at": minute(e["_at"]) if e.get("status") == "running" else None,
         })
     payload = {"schema": SCHEMA, "sent_at": minute(now), "jobs": jobs}
+    plans = plan_rows(cfg, pools) if share_readings else []
+    if plans:
+        payload["plans"] = plans
     check_payload(payload)
     return payload
 
 
+def _num(v, lo, hi):
+    return round(float(v), 2) if isinstance(v, (int, float)) and not isinstance(v, bool) and lo <= v <= hi else None
+
+
+def _minute_or_none(text):
+    try:
+        d = datetime.fromisoformat(str(text).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+    return minute(d if d.tzinfo else d.replace(tzinfo=timezone.utc))
+
+
+def plan_rows(cfg, pools):
+    """Each configured pool's latest reading, copied field by field. Pools with neither a reading nor a reset
+    time are left out. `pools` (the local numbering) gains any new pool."""
+    out = []
+    for p in (cfg or {}).get("pools", []):
+        if p.get("id") is None:
+            continue
+        left_pct = _num(p.get("remaining_pct"), 0, 100)
+        left_usd = _num(p.get("remaining_usd"), 0, 1e7)
+        resets = _minute_or_none(p.get("resets_at")) if p.get("resets_at") else None
+        if left_pct is None and left_usd is None and resets is None:
+            continue
+        as_of = _minute_or_none(p.get("updated_at")) if p.get("updated_at") else None
+        src = str(p.get("source") or "")
+        how = "auto" if src.startswith("sync:") else ("manual" if as_of else None)
+        sync = p.get("sync") if isinstance(p.get("sync"), dict) else {}
+        window = sync.get("window", "week") if sync else None
+        out.append({
+            "pool": pool_ref(p["id"], pools), "plan_type": plan_type(p.get("kind")), "provider": provider(p, p.get("kind")),
+            "left_pct": left_pct, "left_usd": left_usd, "resets_at": resets,
+            "window": window if window in WINDOW_NAMES else None, "as_of": as_of, "how": how,
+        })
+    return out[:50]
+
+
 def check_payload(payload):
     """Raise UploadError unless the payload holds exactly the allowlisted keys and values. Run before every send."""
-    if not isinstance(payload, dict) or set(payload) != set(TOP_KEYS):
+    if not isinstance(payload, dict) or not (set(TOP_KEYS) <= set(payload) <= set(TOP_KEYS + OPTIONAL_TOP_KEYS)):
         raise UploadError(f"payload keys {sorted(payload) if isinstance(payload, dict) else payload!r} "
                           f"are not exactly {list(TOP_KEYS)}")
     if payload["schema"] != SCHEMA or not MINUTE.match(str(payload["sent_at"])):
@@ -313,6 +360,19 @@ def check_payload(payload):
               and (j["heartbeat_at"] is None or MINUTE.match(str(j["heartbeat_at"]))))
         if not ok:
             raise UploadError(f"job {j.get('id')!r} has a value outside the allowlist")
+    plans = payload.get("plans", [])
+    if not isinstance(plans, list) or len(plans) > 50:
+        raise UploadError("plans must be a list of at most 50")
+    num = lambda v, hi: v is None or (isinstance(v, (int, float)) and not isinstance(v, bool) and 0 <= v <= hi)
+    for r in plans:
+        if not isinstance(r, dict) or set(r) != set(PLAN_KEYS):
+            raise UploadError(f"plan keys {sorted(r) if isinstance(r, dict) else r!r} are not exactly {list(PLAN_KEYS)}")
+        ok = (POOL_REF.match(str(r["pool"])) and r["plan_type"] in PLAN_TYPES and r["provider"] in PROVIDERS
+              and num(r["left_pct"], 100) and num(r["left_usd"], 1e7)
+              and all(r[k] is None or MINUTE.match(str(r[k])) for k in ("resets_at", "as_of"))
+              and r["window"] in WINDOW_NAMES + (None,) and r["how"] in HOWS + (None,))
+        if not ok:
+            raise UploadError(f"plan {r.get('pool')!r} has a value outside the allowlist")
 
 
 # ---------- reading new runs ----------
@@ -363,7 +423,8 @@ def next_payload(here, state, now):
     entries, pos = new_entries(here, offset)
     cfg, est_now = _config(here)
     pools = dict(state.get("pools", {}))
-    return build_payload(entries, cfg, state["salt"], pools, now, est_now), pos, pools
+    return build_payload(entries, cfg, state["salt"], pools, now, est_now,
+                         share_readings=bool(state.get("share_readings"))), pos, pools
 
 
 # ---------- transport ----------
@@ -392,7 +453,9 @@ def http(method, url, body=None, token=None, timeout=10):
 def upload_once(here, state, now, transport=http, clock=time.time):
     """Send one batch. Returns (rows sent, more waiting). Saves the cursor only after the server accepts it."""
     payload, pos, pools = next_payload(here, state, now)
-    if not payload["jobs"]:
+    # A new plan reading (from sync or set) goes up on its own, even with no new jobs; an unchanged one doesn't.
+    plans_changed = bool(payload.get("plans")) and payload.get("plans") != state.get("last_plans")
+    if not payload["jobs"] and not plans_changed:
         state.setdefault("cursors", {})[folder_key(here)] = pos
         save_state(state)
         return 0, False
@@ -404,6 +467,8 @@ def upload_once(here, state, now, transport=http, clock=time.time):
         raise UploadError(f"server answered {status}" + (f": {why}" if why else ""))
     state.setdefault("cursors", {})[folder_key(here)] = pos
     state["pools"] = pools
+    if payload.get("plans"):
+        state["last_plans"] = payload["plans"]
     state["last_sent"] = clock()
     save_state(state)
     return len(payload["jobs"]), len(payload["jobs"]) == MAX_ROWS
@@ -458,8 +523,20 @@ def cmd_connect(here, argv, now, transport=http, out=print, err=None, sleep=time
     ap.add_argument("--server", default=os.environ.get("ALLO_ROUTER_SERVER", DEFAULT_SERVER),
                     help=f"dashboard server (default {DEFAULT_SERVER})")
     ap.add_argument("--no-browser", action="store_true", help="print the approval link instead of opening it")
+    ap.add_argument("--share-readings", choices=("on", "off"),
+                    help="on: also send each plan's %% or $ left, reset time and when it was read, so the dashboard "
+                         "can show them. Off by default. Labels and sources still never leave.")
     a = ap.parse_args(argv)
     state = load_state()
+    if a.share_readings:
+        if state is None:
+            out("Not connected yet. Run `allo-router connect` first, then turn readings on.")
+            return 1
+        state["share_readings"] = a.share_readings == "on"
+        state.pop("last_plans", None)
+        save_state(state)
+        out("Plan readings will be sent with uploads." if state["share_readings"] else "Plan readings are no longer sent.")
+        return 0
     if a.show:
         if state is None:
             err("Not connected, so nothing is uploaded. This is what the first upload would send after "

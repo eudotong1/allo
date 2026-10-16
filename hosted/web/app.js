@@ -39,6 +39,52 @@ let checkedAt = null;
 const money = (x) => (x < 0 ? "-$" : "$") + Math.abs(x).toFixed(2);
 const plural = (n, one, many = one + "s") => `${n} ${n === 1 ? one : many}`;
 
+
+// ---------- plan limits: reset times and what is left ----------
+// Times in the viewer's own zone, with a short label: "Fri 6:30 PM ET".
+const zoneShort = (d) => {
+  const z = new Intl.DateTimeFormat("en-US", { timeZoneName: "short" }).formatToParts(d).find((p) => p.type === "timeZoneName")?.value || "";
+  return z.replace(/^([A-Z])[SD]T$/, "$1T");
+};
+const localWhen = (d, withDay = true) => {
+  const t = d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+  return `${withDay ? d.toLocaleDateString("en-US", { weekday: "short" }) + " " : ""}${t} ${zoneShort(d)}`;
+};
+const localDate = (d) => `${d.toLocaleDateString("en-US", { month: "short", day: "numeric" })}, ${localWhen(d, false)}`;
+const WINDOW_MS = { "5h": 5 * 3600000, week: 7 * 86400000 };
+// Every reset of this plan between a and b (ms). A known window repeats the reset; without one it is shown once.
+function resetsBetween(limit, a, b) {
+  if (!limit || !limit.resets_at) return [];
+  const r0 = parseMinute(limit.resets_at).getTime();
+  const step = WINDOW_MS[limit.window];
+  if (!step) return r0 >= a && r0 <= b ? [r0] : [];
+  const out = [];
+  let t = r0 - Math.ceil((r0 - a) / step) * step;
+  for (; t <= b && out.length < 60; t += step) if (t >= a) out.push(t);
+  return out;
+}
+function nextReset(limit, now) {
+  const r = resetsBetween(limit, now.getTime(), now.getTime() + 400 * 86400000);
+  return r.length ? new Date(r[0]) : null;
+}
+// The reading is from before the plan's most recent reset, so "left" is out of date.
+function staleReading(limit, now) {
+  if (!limit || !limit.as_of) return false;
+  const asOf = parseMinute(limit.as_of).getTime();
+  return resetsBetween(limit, asOf + 60000, now.getTime()).length > 0;
+}
+function leftText(limit) {
+  if (!limit) return null;
+  if (typeof limit.left_pct === "number") return `${Math.round(limit.left_pct)}% left`;
+  if (typeof limit.left_usd === "number") return `${money(limit.left_usd)} left`;
+  return null;
+}
+function sourceText(limit) {
+  if (!limit || !limit.as_of) return "";
+  const at = localDate(parseMinute(limit.as_of));
+  return limit.how === "auto" ? `Read automatically ${at}` : `Entered by hand, as of ${at}`;
+}
+
 function planLabel(provider, pool, computer) {
   const p = provider || "other";
   const n = pool ? pool.replace("pool-", "") : "";
@@ -177,6 +223,23 @@ function header(d, now) {
   </header>`;
 }
 
+function limitBlock(l) {
+  if (!l.pool) return "";
+  const now = new Date();
+  const lim = l.limit;
+  const nr = nextReset(lim, now);
+  const left = leftText(lim);
+  if (!lim || (!left && !nr)) return `<span class="lim lim-none">No reading shared yet. Turn on with <code>allo-router connect --share-readings on</code>.</span>`;
+  const stale = staleReading(lim, now);
+  const pct = typeof lim.left_pct === "number" ? Math.max(0, Math.min(100, lim.left_pct)) : null;
+  const tag = lim.how === "auto" ? `<span class="tag auto">Auto</span>` : (lim.how === "manual" ? `<span class="tag manual">Manual</span>` : "");
+  return `<span class="lim">
+    ${pct !== null ? `<span class="lim-bar${stale ? " stale" : ""}"><span style="width:${pct}%;background:${l.color}"></span></span>` : ""}
+    <span class="lim-row">${left ? `<b>${esc(left)}</b>` : ""}${left && nr ? " · " : ""}${nr ? `resets ${esc(localWhen(nr))}` : ""}</span>
+    <span class="lim-src">${tag}${esc(sourceText(lim))}${stale ? ` <em>Older than the last reset; re-read it.</em>` : ""}</span>
+  </span>`;
+}
+
 // The allocation strip: a stacked bar of each plan's share of jobs, with per-plan totals. Real data only.
 function allocation(d, lines) {
   const total = d.totals.jobs || 1;
@@ -189,7 +252,7 @@ function allocation(d, lines) {
     const meta = l.pool
       ? `${plural(l.jobs, "job")} \u00b7 ${pct}%` + (l.priced ? ` \u00b7 ${money(l.saved)} API value` : " \u00b7 API value n/a")
       : `${plural(l.jobs, "job")} \u00b7 ${pct}% \u00b7 missed, no plan fit`;
-    return `<div><span class="sw" style="background:${l.color}"></span><b${l.pool ? "" : ' class="no"'}>${esc(l.name)}</b><span class="meta">${meta}</span></div>`;
+    return `<div><span class="sw" style="background:${l.color}"></span><b${l.pool ? "" : ' class="no"'}>${esc(l.name)}</b><span class="meta">${meta}</span>${limitBlock(l)}</div>`;
   }).join("");
   return `<section class="alloc">
     <div class="alloc-head"><h2 class="cond">Allocation</h2><p class="intro">Share of the jobs each plan took. Each job goes to the plan with the most of its limit left that may take it.</p></div>
@@ -257,7 +320,8 @@ function map(d, lines, now) {
     const y = ys[i];
     const red = l.pool ? "" : ` style="fill:var(--reset-text)"`;
     const counts = `${plural(l.jobs, "task")}${l.runs > l.jobs ? ` · ${plural(l.runs, "run")}` : ""}${l.missed && l.pool ? `, ${l.missed} missed` : ""}`;
-    s += `<text x="262" y="${y - 24}" class="t-name"${red}>${esc(l.name)}<tspan class="t-num" dx="12"${red}>${counts}</tspan></text>`;
+    const lt = leftText(l.limit);
+    s += `<text x="262" y="${y - 24}" class="t-name"${red}>${esc(l.name)}<tspan class="t-num" dx="12"${red}>${counts}</tspan>${lt ? `<tspan class="t-left" dx="12">${esc(lt)}${l.limit.how === "manual" ? " (manual)" : ""}</tspan>` : ""}</text>`;
     const share = l.share ?? Math.round((l.jobs / (d.totals.jobs || 1)) * 100);
     s += `<text x="1308" y="${y + 6}" text-anchor="end" class="t-share"${red}>${share}%</text>`;
     const cap = l.pool ? (l.priced ? `${money(l.saved)} API value (est.)` : "API value n/a") : "missed, no plan fit";
@@ -280,17 +344,28 @@ function map(d, lines, now) {
       s += `<g class="${missed ? "car-x" : (isRun ? "car-run" : "car")}"><title>${esc(tip)}</title>` +
         `<rect x="${cx.toFixed(1)}" y="${y - 9}" width="${w}" height="18"${fillAttr}/><text x="${(cx + w / 2).toFixed(1)}" y="${y + 4}">${esc(label)}</text></g>`;
     }
+    const marks = l.limit && l.limit.window === "5h" ? [nextReset(l.limit, now)].filter((d) => d && d.getTime() <= end).map((d) => d.getTime()) : resetsBetween(l.limit, start, end);
+    for (const t of marks) {
+      const rx = x(t);
+      const past = t < now.getTime();
+      s += `<g class="reset${past ? " past" : ""}"><title>${esc(`${l.short} resets ${localDate(new Date(t))}`)}</title>` +
+        `<path class="halo" d="M${rx.toFixed(1)} ${y - 14} V${y + 12}"/><path d="M${rx.toFixed(1)} ${y - 14} V${y + 12}"/><circle cx="${rx.toFixed(1)}" cy="${y + 17}" r="5"/>` +
+        `<text x="${(rx + (rx > X1 - 150 ? -10 : 10)).toFixed(1)}" y="${y + 22}" text-anchor="${rx > X1 - 150 ? "end" : "start"}">${esc(`${past ? "reset" : "resets"} ${localWhen(new Date(t))}`)}</text></g>`;
+    }
     if (hidden) s += `<text x="${X1 - 4}" y="${y + 26}" text-anchor="end" class="more"><a href="#jobs">+${hidden} more, see all jobs below ↓</a></text>`;
   });
   s += `</svg>`;
-  const planKeys = lines.filter((l) => l.pool).map((l) => `<span><svg width="28" height="14"><rect width="28" height="14" rx="2" fill="${l.color}"/></svg>${esc(l.short)}</span>`).join("");
+  const stripe = (ls) => { const c = ls.filter((l) => l.pool).map((l) => l.color); const w = 38 / (c.length || 1); return `<svg width="38" height="12" aria-hidden="true">${c.map((col, i) => `<rect x="${(i * w).toFixed(1)}" y="3" width="${w.toFixed(1)}" height="6" fill="${col}"/>`).join("")}</svg>`; };
+  const scale = d.range.key === "30d" ? "period" : "week";
   return `<div class="map">${s}</div>
-  <div class="legend" aria-hidden="true">
-    <span><b>Color = the plan that ran the job:</b></span>
-    ${planKeys}
-    <span><svg width="34" height="18"><rect x="1" y="1" width="32" height="16" fill="var(--paper)" stroke="var(--reset-text)" stroke-width="1.5" stroke-dasharray="4 3"/></svg>Job missed</span>
-    ${live ? `<span><svg width="28" height="10"><rect y="3" width="28" height="4" fill="var(--rule)"/></svg>Rest of the ${d.range.key === "30d" ? "period" : "week"}</span>` : ""}
-    <span>Jobs that start close together sit in queue order, not to time scale.</span>
+  <div class="legend" aria-label="How to read the map">
+    <span class="lg-title">How to read it</span>
+    <span class="lg">${stripe(lines)}<span><b>Each line is a plan.</b> Its color matches the plan above.</span></span>
+    <span class="lg"><svg width="38" height="18" aria-hidden="true"><rect width="38" height="18" rx="2" fill="var(--ink)"/><text x="19" y="13" text-anchor="middle" style="fill:var(--paper);font-size:10px;font-weight:700">Docs</text></svg><span><b>Each box is a task</b> that plan did.</span></span>
+    <span class="lg"><svg width="38" height="18" aria-hidden="true"><rect x="1" y="1" width="36" height="16" rx="2" fill="var(--paper)" stroke="var(--reset-text)" stroke-width="1.5" stroke-dasharray="4 3"/></svg><span><b>Dashed red</b> = missed, no plan had room.</span></span>
+    <span class="lg"><svg width="38" height="22" aria-hidden="true"><rect y="8" width="38" height="6" fill="var(--rule)"/><path d="M19 1 V21" stroke="var(--ink)" stroke-width="2"/><circle cx="19" cy="11" r="5" fill="var(--paper)" stroke="var(--ink)" stroke-width="2.5"/></svg><span><b>Ring</b> = the plan's limit resets here.</span></span>
+    ${live ? `<span class="lg"><svg width="38" height="12" aria-hidden="true"><rect y="4" width="38" height="4" fill="var(--rule)"/></svg><span><b>Gray</b> = rest of the ${scale}.</span></span>` : ""}
+    <span class="lg-note">Days are to scale (day lines at midnight UTC); reset labels are in your time zone, ${esc(zoneShort(new Date()))}. Resets sit at their exact time; a box starts at its job's time and only shifts right to avoid overlapping.</span>
   </div>`;
 }
 
@@ -310,7 +385,7 @@ function tables(d, lines) {
   return `<section class="part">
     <div>
       <h2>Where jobs went</h2>
-      <p class="intro">Totals for ${period} by plan. API value (est.) is what the work would have cost at public API list prices, computed only from token usage or cost the tool itself reported; anything else shows n/a. A job Grok Bot sent to another plan counts once, on the plan that ran it. Work Grok Bot did itself shows as Grok Bot, direct (not routed). Plans show as ChatGPT, Claude Personal or Claude Team when the upload can tell them apart; otherwise as pool-N.</p>
+      <p class="intro">Totals for ${period} by plan. API value (est.) is what the work would have cost at public API list prices, computed only from token usage or cost the tool itself reported; anything else shows n/a. Every task counts once, under the plan that did it. Grok Bot\u2019s own work, done without routing, has its own row. Plans show as ChatGPT, Claude Personal or Claude Team when the upload can tell them apart; otherwise as pool-N.</p>
     </div>
     <div>
       <div class="tbl" role="table" aria-label="Jobs by plan">
@@ -326,7 +401,7 @@ function tables(d, lines) {
 function computers(d) {
   const rows = d.computers.map((c) => {
     const up = c.last_upload_at ? (() => { const a = new Date(c.last_upload_at); return `Last upload ${mdy(a)} at ${hhmm(a)}.`; })() : "No upload yet.";
-    return `<div><dt>${esc(c.name)}</dt><dd>Connected ${mdy(new Date(c.connected_at))}. ${up} ${plural(c.jobs, "job")} in this period.</dd>` +
+    return `<div><dt>${esc(c.name)}</dt><dd>${c.connected_at ? `Connected ${mdy(new Date(c.connected_at))}.` : ""} ${up} ${plural(c.jobs, "job")} in this period.</dd>` +
       `<button class="link act" data-disconnect="${c.id}" data-name="${esc(c.name)}">Disconnect</button></div>`;
   }).join("");
   return `<section class="part">
@@ -356,7 +431,7 @@ const about = `<section class="part">
     </div>
     <dl class="rows">
       <div class="two"><dt>Sent</dt><dd>A hashed job id, when it started (to the minute), the plan it went to as pool-1, pool-2, its type and provider (ChatGPT / Claude Personal / Claude Team when known), a short job title, model and effort when set on the plan, whether it ran, why it missed and the API value (est.).</dd></div>
-      <div class="two"><dt>Never sent</dt><dd>Prompts, code, commands, output, file names or paths, plan labels you typed, usage readings or "% left", or keys.</dd></div>
+      <div class="two"><dt>Never sent</dt><dd>Prompts, code, commands, output, file names or paths, plan labels you typed, where a reading came from, or keys. Plan readings (% or $ left, reset time, when read, auto or manual) only if you turn them on with <code>allo-router connect --share-readings on</code>.</dd></div>
       <div class="two"><dt>Stop</dt><dd><code>allo-router disconnect</code> revokes the token and deletes that computer's history here. Your local dashboard keeps working either way.</dd></div>
     </dl>
   </section>`;

@@ -182,7 +182,7 @@ def test_set_records_usd_reset_and_note(tmp_path):
     copy_examples(tmp_path)
     planner.cmd_set(tmp_path, ["api_credit", "usd=120", "reset=2099-02-01T00:00:00Z", "note=billing page"])
     p = {x["id"]: x for x in json.loads((tmp_path / "pools.json").read_text())["pools"]}["api_credit"]
-    assert p["remaining_usd"] == 120.0 and p["resets_at"] == "2099-02-01T00:00:00Z" and p["source"] == "billing page"
+    assert p["remaining_usd"] == 120.0 and p["resets_at"] == "2099-02-01T00:00:00Z" and p["source"] == "manual: billing page"
     assert p["updated_at"].endswith("Z")
 
 

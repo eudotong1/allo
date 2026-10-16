@@ -16,7 +16,8 @@
       <h2>Sent, per job</h2>
       <p>A hashed id (an HMAC made with a salt that never leaves your computer), when the job started rounded to the minute, the plan it went to as pool-1, pool-2 (the labels you typed stay on your computer), the plan type (subscription or API credit), the provider (ChatGPT, Claude Personal, Claude Team, Claude, Gemini, API or other), a short job title (from the task name, max 48 characters), the model and effort when those are set on the plan's run command, whether it ran, why it missed (from a fixed list), and the API value (est.) in USD, only when the tool reported token usage or cost.</p>
       <h2>Never sent</h2>
-      <p>Prompts, commands, code, output, file names or paths, plan labels you typed, usage readings or "% left", token counts, your hostname or username, and API keys. The server rejects any upload with a field that isn't on the list above.</p>
+      <p>Prompts, commands, code, output, file names or paths, plan labels you typed, where a reading came from, token counts, your hostname or username, and API keys. The server rejects any upload with a field that isn't on the list above.</p>
+      <p><b>Plan readings, only if you opt in.</b> With <code>allo-router connect --share-readings on</code>, uploads also carry each plan's % or $ left, its reset time and window (5-hour or weekly), when the reading was taken, and whether it was read automatically by <code>allo-router sync</code> or typed in with <code>allo-router set</code>. Plans are still numbered (pool-1, pool-2); labels and file paths never leave. <code>--share-readings off</code> stops it.</p>
       <h2>From your GitHub sign-in</h2>
       <p>Your GitHub user id and login, nothing else. The sign-in asks for no extra permissions.</p>
       <h2>How long it's kept</h2>
