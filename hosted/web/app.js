@@ -188,32 +188,45 @@ function runningStrip(d, lines) {
     `</section>`;
 }
 
-// Suggested next: the planner's runnable jobs on each computer (titles and suggested plan only). Each has its own
-// "Send to Grok Bot" button: one click asks that computer to run that one job; nothing runs by itself.
+// Suggested next: the planner's runnable jobs on each computer (titles and plans only). Each job has one chip per
+// plan that may take it; the planner's pick is highlighted. A click asks that computer, through the same request
+// path, to run that one job on that plan. Nothing runs by itself.
 const sending = new Set();
+const REASON = {
+  "stale-reading": "needs a fresh reading", "no-run-setup": "that plan has no run setup", "already-ran": "it already ran",
+  "not-eligible": "that plan may not take this job", "unknown-route": "that plan isn't set up on the computer",
+  "unknown-job": "the computer no longer has this job", other: "the computer refused it",
+};
+const routeColor = (p) => COLORS[p === "codex" ? "chatgpt" : p] || COLORS.other;
+const routeName = (r) => planLabel(r.provider || "other", r.pool, null);
+
 function queueSection(d) {
   const q = d.queue || [];
-  const head = `<div class="running-head"><h2 class="cond">Suggested next</h2><p class="intro">What allo-router would run next, and on which plan. Nothing runs until you press Send; your computer picks it up within about 20 seconds and runs it there.</p></div>`;
+  const head = `<div class="running-head"><h2 class="cond">Suggested next</h2><p class="intro">What allo-router would run next. Pick a plan to send the job to Grok Bot; the highlighted one is allo-router\u2019s pick. Your computer picks it up within about 20 seconds and runs it there.</p></div>`;
   if (!q.length) {
     return `<section class="queue">${head}<p class="queue-empty">Nothing queued. When <code>tasks.json</code> on a connected computer has jobs that haven\u2019t run yet, they show up here.</p></section>`;
   }
   const items = q.map((j) => {
     const key = `${j.install_id}|${j.id}`;
-    const plan = planLabel(j.provider || "other", j.pool, null);
     const where = j.computer || "your computer";
-    let state = "", btn = "";
+    const routes = j.routes || [];
+    const chosen = routes.find((r) => r.pool === j.route);
+    const busy = sending.has(key) || j.request === "pending" || j.request === "taken";
+    let state = "";
     if (sending.has(key)) state = `<span class="qs">Sending\u2026</span>`;
-    else if (j.request === "pending") state = `<span class="qs wait">Waiting for ${esc(where)}</span>`;
-    else if (j.request === "taken") state = `<span class="qs run"><span class="pulse" aria-hidden="true"></span>Running on ${esc(where)}</span>`;
-    else {
-      if (j.request === "failed") state = `<span class="qs bad">Last run failed</span>`;
-      if (j.request === "done") state = `<span class="qs ok">Ran</span>`;
-      btn = `<button type="button" class="send" data-send="${esc(key)}">${j.request === "failed" ? "Try again" : "Send to Grok Bot"}</button>`;
-    }
-    const sw = COLORS[j.provider === "codex" ? "chatgpt" : j.provider] || COLORS.other;
-    return `<li><span class="sw" style="background:${sw}"></span><span class="qt"><b>${esc(j.title || "Untitled job")}</b>` +
-      `<span class="on">${esc(plan)}${d.computers.length > 1 ? ` \u00b7 ${esc(where)}` : ""}${j.priority != null ? ` \u00b7 priority ${j.priority}` : ""}</span></span>` +
-      `<span class="qa">${state}${btn}</span></li>`;
+    else if (j.request === "pending") state = `<span class="qs wait">Waiting for ${esc(where)} \u00b7 ${esc(chosen ? routeName(chosen) : "")}</span>`;
+    else if (j.request === "taken") state = `<span class="qs run"><span class="pulse" aria-hidden="true"></span>Running on ${esc(chosen ? routeName(chosen) : where)}</span>`;
+    else if (j.request === "refused") state = `<span class="qs bad">Refused on ${esc(chosen ? routeName(chosen) : "that plan")}: ${esc(REASON[j.reason] || REASON.other)}</span>`;
+    else if (j.request === "failed") state = `<span class="qs bad">Last run on ${esc(chosen ? routeName(chosen) : "that plan")} failed</span>`;
+    else if (j.request === "done") state = `<span class="qs ok">Ran on ${esc(chosen ? routeName(chosen) : "a plan")}</span>`;
+    const chips = busy ? "" : `<span class="routes" role="group" aria-label="Send ${esc(j.title || "job")} to">` + routes.map((r) => {
+      const sug = r.pool === j.pool;
+      return `<button type="button" class="route${sug ? " sug" : ""}" style="--c:${routeColor(r.provider)}" data-send="${esc(key)}" data-route="${esc(r.pool)}"` +
+        ` title="Run on ${esc(routeName(r))}${sug ? " (allo-router\u2019s pick)" : ""}"><span class="dot" aria-hidden="true"></span>${esc(routeName(r))}${sug ? `<span class="pick">pick</span>` : ""}</button>`;
+    }).join("") + `</span>`;
+    return `<li><span class="qt"><b>${esc(j.title || "Untitled job")}</b>` +
+      `<span class="on">${d.computers.length > 1 ? `${esc(where)} \u00b7 ` : ""}${j.priority != null ? `priority ${j.priority}` : ""}</span>${state}</span>` +
+      chips + `</li>`;
   }).join("");
   return `<section class="queue">${head}<ul class="queue-list">${items}</ul></section>`;
 }
@@ -222,15 +235,16 @@ function wireQueue() {
   for (const b of document.querySelectorAll("[data-send]")) {
     b.onclick = async () => {
       const key = b.getAttribute("data-send");
-      if (sending.has(key)) return; // one request per click, and a double click is still one
+      const route = b.getAttribute("data-route");
+      if (sending.has(key)) return; // one request per job; a double click is still one
       const [install, id] = key.split("|");
       sending.add(key);
       render();
-      const r = await post("/v1/me/queue/run", { install_id: Number(install), id });
+      const r = await post("/v1/me/queue/run", { install_id: Number(install), id, route });
       sending.delete(key);
       if (r.status === 200 && data) {
         const j = (data.queue || []).find((x) => `${x.install_id}|${x.id}` === key);
-        if (j) j.request = r.body.status;
+        if (j) { j.request = r.body.status; j.route = r.body.route; }
       }
       etag = null;
       render();
