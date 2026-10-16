@@ -416,12 +416,19 @@ def build_queue(state, router_dirs, now):
             qid = hid(state["salt"], ["queue", str(here), str(t["id"])])
             pcfg = pools.get(j["pool"], {})
             pr = t.get("priority")
+            # Every plan that may take this job and has a run block: the route chips on the dashboard.
+            routes = []
+            for pid in j.get("eligible") or []:
+                rp = pools.get(pid) or {}
+                if isinstance(rp.get("run"), dict) and len(routes) < up.MAX_ROUTES:
+                    routes.append({"pool": pool_ref(state, pid), "provider": up.provider(rp, rp.get("kind") or "subscription")})
             rows.append({
                 "id": qid,
                 "title": up.short_title(t.get("name")),
                 "pool": pool_ref(state, j["pool"]),
                 "provider": up.provider(pcfg, pcfg.get("kind") or "subscription"),
                 "priority": pr if isinstance(pr, int) and not isinstance(pr, bool) and 0 <= pr <= 999 else None,
+                "routes": routes,
             })
             where[qid] = (str(here), str(t["id"]))
             if len(rows) >= up.MAX_QUEUE:
@@ -439,44 +446,86 @@ def take_requests(state, transport=up.http):
     status, body = transport("GET", state["server"].rstrip("/") + "/v1/requests", None, state["token"])
     if status != 200 or not isinstance(body, dict):
         return []
-    return [r for r in body.get("requests") or [] if isinstance(r, str) and up.JOB_ID.match(r)]
+    return [r for r in body.get("requests") or [] if isinstance(r, dict) and isinstance(r.get("id"), str)
+            and up.JOB_ID.match(r["id"]) and isinstance(r.get("route"), str) and up.POOL_REF.match(r["route"])]
 
 
-def start_request(req_id, where, spawn=None):
+def pool_for_route(state, route):
+    """The local pool id behind a pool-N route, or None when this computer has no such pool."""
+    for pid, ref in (state.get("pools") or {}).items():
+        if ref == route:
+            return pid
+    return None
+
+
+def reason_for(skip: str) -> str:
+    s = (skip or "").lower()
+    if "fresh reading" in s:
+        return "stale-reading"
+    if "no run block" in s or "bad run block" in s:
+        return "no-run-setup"
+    if "already ran" in s:
+        return "already-ran"
+    if "data tier" in s or "no pool fits" in s:
+        return "not-eligible"
+    if "unknown route" in s:
+        return "unknown-route"
+    return "other"
+
+
+def report(state, req_id, status, reason, transport):
+    p = {"schema": up.SCHEMA, "sent_at": utc_minute(datetime.now(timezone.utc)), "jobs": [],
+         "results": [{"id": req_id, "status": status, "reason": reason}]}
+    up.check_payload(p)
+    transport("POST", state["server"].rstrip("/") + "/v1/jobs", p, state["token"])
+
+
+def start_request(req_id, where, pool, spawn=None):
     """Run one requested job in its own process, so live polling keeps going. Exactly one job, by its id."""
     folder, task_id = where
-    cmd = [sys.executable, str(Path(__file__).resolve()), "--run-request", folder, task_id, req_id]
+    cmd = [sys.executable, str(Path(__file__).resolve()), "--run-request", folder, task_id, req_id, pool]
     if spawn:
         return spawn(cmd)
     log = open(Path(up.config_dir()) / "requests.log", "a")
     return subprocess.Popen(cmd, stdout=log, stderr=log, start_new_session=True)
 
 
-def run_request(folder, task_id, req_id, now=None, transport=up.http, out=print, run=None):
-    """Plan only this task (the normal preview, with its usual checks), then run exactly that saved plan,
-    upload the new run row, and report done/failed for the request. Returns the result status."""
+def run_request(folder, task_id, req_id, pool, now=None, transport=up.http, out=print, run=None):
+    """Check the job on the chosen pool with the executor's own rules; refuse with a reason if it would be
+    skipped (stale reading, no run setup, tier, already ran). Otherwise plan only this task on that pool, run
+    exactly that saved plan, upload the run row, and report the result. Returns the result status."""
     import tempfile
     import allo_exec
     here = Path(folder)
     now = now or datetime.now(timezone.utc)
     run = run or allo_exec.cmd_run
-    with tempfile.TemporaryDirectory() as tmp:
-        plan = str(Path(tmp) / "request-plan.json")
-        rc = run(here, ["--only", task_id, "--save-plan", plan], now, out=out)
-        if rc == 0:
-            rc = run(here, ["--plan", plan, "--execute", "--yes"], now, out=out)
-    result = "done" if rc == 0 else "failed"
+    reason = None
+    try:
+        cfg, tasks = allo.load(here)
+        check = allo_exec.select(cfg, tasks, here, now, {task_id}, pool=pool)
+    except Exception:
+        check = []
+    if not check:
+        result, reason = "refused", "unknown-job"
+    elif check[0]["skip"]:
+        result, reason = "refused", reason_for(check[0]["skip"])
+        out(f"request {req_id}: refused on {pool}: {check[0]['skip']}")
+    else:
+        with tempfile.TemporaryDirectory() as tmp:
+            plan = str(Path(tmp) / "request-plan.json")
+            rc = run(here, ["--only", task_id, "--pool", pool, "--save-plan", plan], now, out=out)
+            if rc == 0:
+                rc = run(here, ["--plan", plan, "--execute", "--yes"], now, out=out)
+        result = "done" if rc == 0 else "failed"
     state = up.load_state()
     if state:
-        try:
-            up.upload_once(here, state, datetime.now(timezone.utc), transport=transport)
-        except Exception as e:
-            out(f"request {req_id}: run row upload failed ({type(e).__name__}); it goes up with the next upload")
-        payload = {"schema": up.SCHEMA, "sent_at": utc_minute(datetime.now(timezone.utc)), "jobs": [],
-                   "results": [{"id": req_id, "status": result}]}
-        up.check_payload(payload)
-        transport("POST", state["server"].rstrip("/") + "/v1/jobs", payload, state["token"])
-    out(f"request {req_id}: {result}")
+        if result != "refused":
+            try:
+                up.upload_once(here, state, datetime.now(timezone.utc), transport=transport)
+            except Exception as e:
+                out(f"request {req_id}: run row upload failed ({type(e).__name__}); it goes up with the next upload")
+        report(state, req_id, result, reason, transport)
+    out(f"request {req_id}: {result}" + (f" ({reason})" if reason else ""))
     return result
 
 
@@ -517,7 +566,7 @@ def cmd_live(argv, now=None, transport=up.http, out=print, spawn=None):
     ap.add_argument("--every", type=float, default=4.0, help="seconds between polls in --watch (default 4)")
     ap.add_argument("--dir", action="append", default=[], help="router folder with runs/current.json (repeatable)")
     ap.add_argument("--backfill", action="store_true", help="import all events in run.log once (not only new)")
-    ap.add_argument("--run-request", nargs=3, metavar=("FOLDER", "TASK_ID", "REQUEST_ID"), help=argparse.SUPPRESS)
+    ap.add_argument("--run-request", nargs=4, metavar=("FOLDER", "TASK_ID", "REQUEST_ID", "POOL"), help=argparse.SUPPRESS)
     a = ap.parse_args(argv)
     if a.run_request:
         return 0 if run_request(*a.run_request, transport=transport, out=out) == "done" else 1
@@ -544,13 +593,19 @@ def cmd_live(argv, now=None, transport=up.http, out=print, spawn=None):
             up.save_state(state)
         out(f"live: uploaded {sent} row(s) ({running} running) to {state['server']}")
         # Dashboard clicks: one process per requested job; ids this computer doesn't know are reported failed.
-        for rid in take_requests(state, transport):
-            if rid in where:
-                start_request(rid, where[rid], spawn=spawn)
-                out(f"live: started requested job {rid}")
+        # Dashboard clicks: one process per requested job, on the route that was picked. The route must be one of
+        # this job's own plans here; anything else is refused and never run.
+        routes_of = {q["id"]: {r["pool"] for r in q["routes"]} for q in queue}
+        for req in take_requests(state, transport):
+            rid, route = req["id"], req["route"]
+            pool = pool_for_route(state, route)
+            if rid not in where:
+                report(state, rid, "refused", "unknown-job", transport)
+            elif pool is None or route not in routes_of.get(rid, set()):
+                report(state, rid, "refused", "unknown-route", transport)
             else:
-                p = {"schema": up.SCHEMA, "sent_at": utc_minute(n), "jobs": [], "results": [{"id": rid, "status": "failed"}]}
-                transport("POST", state["server"].rstrip("/") + "/v1/jobs", p, state["token"])
+                start_request(rid, where[rid], pool, spawn=spawn)
+                out(f"live: started requested job {rid} on {route}")
         if a.backfill:
             a.backfill = False  # only the first pass in --watch
         return 0

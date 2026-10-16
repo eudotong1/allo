@@ -50,9 +50,12 @@ DEBOUNCE_S = 15
 TOP_KEYS = ("schema", "sent_at", "jobs")
 OPTIONAL_TOP_KEYS = ("plans", "queue", "results")
 # Suggested next: titles and the suggested plan only, never prompts or commands. Results report a requested run.
-QUEUE_KEYS = ("id", "title", "pool", "provider", "priority")
-RESULT_KEYS = ("id", "status")
-RESULT_STATUSES = ("done", "failed")
+QUEUE_KEYS = ("id", "title", "pool", "provider", "priority", "routes")
+ROUTE_KEYS = ("pool", "provider")
+MAX_ROUTES = 10
+RESULT_KEYS = ("id", "status", "reason")
+RESULT_STATUSES = ("done", "failed", "refused")
+REASONS = ("stale-reading", "no-run-setup", "already-ran", "not-eligible", "unknown-route", "unknown-job", "other")
 MAX_QUEUE = 50
 # One row per plan: its current reading and reset time, so the dashboard can show what is left and when it resets.
 # "how" says where the reading came from: "auto" (allo-router sync read it from the provider's own files) or
@@ -387,14 +390,18 @@ def check_payload(payload):
         ok = (JOB_ID.match(str(q["id"])) and (q["title"] is None or (isinstance(q["title"], str) and TITLE_OK.match(q["title"])))
               and (q["pool"] is None or POOL_REF.match(str(q["pool"]))) and q["provider"] in PROVIDERS + (None,)
               and (q["priority"] is None or (isinstance(q["priority"], int) and not isinstance(q["priority"], bool)
-                                             and 0 <= q["priority"] <= 999)))
+                                             and 0 <= q["priority"] <= 999))
+              and isinstance(q["routes"], list) and len(q["routes"]) <= MAX_ROUTES
+              and all(isinstance(r, dict) and set(r) == set(ROUTE_KEYS) and POOL_REF.match(str(r["pool"]))
+                      and r["provider"] in PROVIDERS for r in q["routes"]))
         if not ok:
             raise UploadError(f"queue item {q.get('id')!r} has a value outside the allowlist")
     results = payload.get("results", [])
     if not isinstance(results, list) or len(results) > 20:
         raise UploadError("results must be a list of at most 20")
     for r in results:
-        if not isinstance(r, dict) or set(r) != set(RESULT_KEYS) or not JOB_ID.match(str(r["id"])) or r["status"] not in RESULT_STATUSES:
+        if not isinstance(r, dict) or set(r) != set(RESULT_KEYS) or not JOB_ID.match(str(r["id"])) or r["status"] not in RESULT_STATUSES \
+                or r["reason"] not in REASONS + (None,):
             raise UploadError("result outside the allowlist")
 
 

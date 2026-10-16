@@ -53,17 +53,23 @@ def test_a_click_starts_one_local_run_and_unknown_ids_fail(tmp_path, monkeypatch
     monkeypatch.setattr(up, "log_upload", lambda *a: None)
     q, where = L.build_queue(s, [here], NOW)
     known = q[0]["id"]
+    known2 = q[1]["id"]
+    assert all(x["routes"] for x in q)
     posts, spawned = [], []
 
     def transport(method, url, body, token):
         if method == "GET" and url.endswith("/v1/requests"):
-            return 200, {"requests": [known, "h:" + "f" * 16]}
+            return 200, {"requests": [{"id": known, "route": q[0]["routes"][0]["pool"]}, {"id": "h:" + "f" * 16, "route": "pool-1"},
+                                      {"id": known2, "route": "pool-99"}]}
         posts.append(body)
         return 200, {}
     assert L.cmd_live(["--dir", str(here)], now=NOW, transport=transport, out=lambda *_: None, spawn=spawned.append) == 0
-    assert len(spawned) == 1 and spawned[0][-3:] == [where[known][0], where[known][1], known]
+    pool = L.pool_for_route(s, q[0]["routes"][0]["pool"])
+    assert len(spawned) == 1 and spawned[0][-4:] == [where[known][0], where[known][1], known, pool]
     assert any(p.get("queue") for p in posts)  # queue went up with the poll
-    assert {"id": "h:" + "f" * 16, "status": "failed"} in [r for p in posts for r in p.get("results", [])]
+    results = [r for p in posts for r in p.get("results", [])]
+    assert {"id": "h:" + "f" * 16, "status": "refused", "reason": "unknown-job"} in results
+    assert {"id": known2, "status": "refused", "reason": "unknown-route"} in results
 
 
 def test_run_request_plans_then_runs_exactly_that_job_and_reports(tmp_path, monkeypatch):
@@ -81,10 +87,10 @@ def test_run_request_plans_then_runs_exactly_that_job_and_reports(tmp_path, monk
     def transport(method, url, body, token):
         posts.append(body)
         return 200, {}
-    assert L.run_request(str(here), "2", "h:" + "2" * 16, now=NOW, transport=transport, out=lambda *_: None, run=fake_run) == "done"
-    assert calls == [["--only", "2"], ["--plan", "--execute", "--yes"]]
-    assert posts[-1]["results"] == [{"id": "h:" + "2" * 16, "status": "done"}]
-    assert L.run_request(str(here), "2", "h:" + "3" * 16, now=NOW, transport=transport, out=lambda *_: None,
+    assert L.run_request(str(here), "1", "h:" + "2" * 16, "chatgpt", now=NOW, transport=transport, out=lambda *_: None, run=fake_run) == "done"
+    assert calls == [["--only", "1"], ["--plan", "--execute", "--yes"]]
+    assert posts[-1]["results"] == [{"id": "h:" + "2" * 16, "status": "done", "reason": None}]
+    assert L.run_request(str(here), "1", "h:" + "3" * 16, "chatgpt", now=NOW, transport=transport, out=lambda *_: None,
                          run=lambda *a, **k: 2) == "failed"
 
 
@@ -96,7 +102,24 @@ def test_run_request_with_the_real_executor_runs_one_dry_run_job(tmp_path, monke
     monkeypatch.setattr(up, "log_upload", lambda *a: None)
     monkeypatch.setattr(up, "upload_once", lambda *a, **k: (0, False))
     out = []
-    r = L.run_request(str(here), "1", "h:" + "4" * 16, now=NOW, transport=lambda *a: (200, {}), out=out.append)
+    r = L.run_request(str(here), "1", "h:" + "4" * 16, "chatgpt", now=NOW, transport=lambda *a: (200, {}), out=out.append)
     assert r == "done"
     rows = [json.loads(x) for x in (here / "runs.jsonl").read_text().splitlines()]
     assert {str(x["task_id"]) for x in rows} == {"1"}  # exactly the one requested task
+    assert {x["pool"] for x in rows} == {"chatgpt"}  # on the route that was picked, not the planner's
+
+
+def test_route_override_still_refuses_what_the_executor_would_skip(tmp_path, monkeypatch):
+    here = folder(tmp_path)
+    s = state()
+    monkeypatch.setattr(up, "load_state", lambda: s)
+    posts = []
+    tr = lambda m, u, b, t: (posts.append(b), (200, {}))[1]
+    ran = []
+    fake = lambda *a, **k: ran.append(a) or 0
+    # claude_personal has no reading in the example config: needs a fresh reading first.
+    assert L.run_request(str(here), "1", "h:" + "5" * 16, "claude_personal", now=NOW, transport=tr, out=lambda *_: None, run=fake) == "refused"
+    assert posts[-1]["results"][0]["reason"] == "stale-reading"
+    assert L.run_request(str(here), "1", "h:" + "6" * 16, "nope", now=NOW, transport=tr, out=lambda *_: None, run=fake) == "refused"
+    assert posts[-1]["results"][0]["reason"] == "unknown-route"
+    assert ran == []  # nothing started for a refused request
