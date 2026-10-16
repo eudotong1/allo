@@ -183,6 +183,7 @@ async function revokeInstall(env, inst, keepHistory) {
     env.DB.prepare("UPDATE installs SET revoked_at = ?, token_hash = NULL WHERE id = ?").bind(iso(), inst.id),
     bump(env, inst.user_id),
   ];
+  stmts.unshift(env.DB.prepare("DELETE FROM plans WHERE install_id = ?").bind(inst.id));
   if (!keepHistory) stmts.unshift(env.DB.prepare("DELETE FROM jobs WHERE install_id = ?").bind(inst.id));
   await env.DB.batch(stmts);
 }
@@ -346,6 +347,14 @@ async function uploadJobs(request, env) {
     ).bind(inst.id, j.id, inst.user_id, j.at, j.pool, j.plan_type, j.provider, j.status, j.skip, JSON.stringify(j.miss),
            j.est_saved_usd, j.title, j.model, j.effort, j.heartbeat_at),
   );
+  for (const r of body.plans || []) {
+    stmts.push(env.DB.prepare(
+      "INSERT INTO plans (install_id, pool, user_id, plan_type, provider, left_pct, left_usd, resets_at, window, as_of, how) " +
+      "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(install_id, pool) DO UPDATE SET plan_type=excluded.plan_type, " +
+      "provider=excluded.provider, left_pct=excluded.left_pct, left_usd=excluded.left_usd, resets_at=excluded.resets_at, " +
+      "window=excluded.window, as_of=excluded.as_of, how=excluded.how",
+    ).bind(inst.id, r.pool, inst.user_id, r.plan_type, r.provider, r.left_pct, r.left_usd, r.resets_at, r.window, r.as_of, r.how));
+  }
   stmts.push(
     env.DB.prepare("UPDATE installs SET last_upload_at = ?, window_start = ?, window_count = ? WHERE id = ?")
       .bind(iso(now), fresh ? iso(now) : inst.window_start, fresh ? 1 : inst.window_count + 1, inst.id),
@@ -372,15 +381,17 @@ async function dashboard(request, env, user, url) {
   if (request.headers.get("If-None-Match") === etag) {
     return new Response(null, { status: 304, headers: { ETag: etag, "Cache-Control": "private, no-cache" } });
   }
-  const [installs, rows, spotInfo] = await Promise.all([
+  const [installs, rows, spotInfo, plans] = await Promise.all([
     env.DB.prepare("SELECT id, name, created_at, last_upload_at FROM installs WHERE user_id = ? AND revoked_at IS NULL AND token_hash IS NOT NULL ORDER BY created_at")
       .bind(user.id).all().then((r) => r.results),
     env.DB.prepare("SELECT install_id, id, at, pool, plan_type, provider, status, skip, miss, est_saved_usd, title, model, effort, heartbeat_at FROM jobs " +
       "WHERE user_id = ? AND at >= ? AND at < ? ORDER BY at, install_id, id LIMIT 5000")
       .bind(user.id, minuteKey(range.start), minuteKey(range.end)).all().then((r) => r.results),
     spots(env),
+    env.DB.prepare("SELECT install_id, pool, plan_type, provider, left_pct, left_usd, resets_at, window, as_of, how FROM plans WHERE user_id = ?")
+      .bind(user.id).all().then((r) => r.results),
   ]);
-  const s = summarize(rows, installs, new Date());
+  const s = summarize(rows, installs, new Date(), plans);
   const perInstall = {};
   for (const j of s.jobs) perInstall[j.computer] = (perInstall[j.computer] || 0) + 1;
   const computers = installs.map((i) => ({
@@ -402,6 +413,7 @@ async function dashboard(request, env, user, url) {
 async function deleteAccount(env, user, url) {
   await env.DB.batch([
     env.DB.prepare("DELETE FROM jobs WHERE user_id = ?").bind(user.id),
+    env.DB.prepare("DELETE FROM plans WHERE user_id = ?").bind(user.id),
     env.DB.prepare("DELETE FROM installs WHERE user_id = ?").bind(user.id),
     env.DB.prepare("DELETE FROM sessions WHERE user_id = ?").bind(user.id),
     env.DB.prepare("DELETE FROM device_codes WHERE user_id = ?").bind(user.id),

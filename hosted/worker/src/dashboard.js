@@ -21,7 +21,7 @@ export function isJunk(r) {
   return false;
 }
 
-export function summarize(rows, installs, now = new Date()) {
+export function summarize(rows, installs, now = new Date(), plans = []) {
   const STALE_MS = 3 * 60 * 1000; // a running row with no heartbeat for 3 minutes is treated as gone
   const kept = rows.filter((r) => !isJunk(r) && !(r.status === "skipped" && NOT_ROUTED.includes(r.skip)));
   // A job counts once, on the plan that ran it. Orchestrator rows (Grok Bot handing a job to another plan) are
@@ -131,5 +131,11 @@ export function summarize(rows, installs, now = new Date()) {
     let left = 100 - ordered.reduce((a, l) => a + l.share, 0);
     [...ordered.keys()].sort((a, b) => (raw[b] % 1) - (raw[a] % 1)).forEach((i) => { if (left > 0 && ordered[i].jobs) { ordered[i].share += 1; left -= 1; } });
   } else ordered.forEach((l) => { l.share = 0; });
+  // Each plan's latest reading (left, reset time, auto or manual), matched to its line by computer and pool.
+  for (const l of ordered) {
+    const inst = String(l.key).split(":")[0];
+    const r = plans.find((p) => String(p.install_id) === inst && p.pool === l.pool);
+    l.limit = r ? { left_pct: r.left_pct ?? null, left_usd: r.left_usd ?? null, resets_at: r.resets_at || null, window: r.window || null, as_of: r.as_of || null, how: r.how || null } : null;
+  }
   return { totals, lines: ordered, jobs: tasks, running };
 }

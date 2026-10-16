@@ -5,6 +5,10 @@
 export const SCHEMA = 1;
 export const MAX_ROWS = 500;
 export const TOP_KEYS = ["schema", "sent_at", "jobs"];
+export const OPTIONAL_TOP_KEYS = ["plans"];
+export const PLAN_KEYS = ["pool", "plan_type", "provider", "left_pct", "left_usd", "resets_at", "window", "as_of", "how"];
+export const WINDOW_NAMES = ["5h", "week"];
+export const HOWS = ["auto", "manual"];
 export const JOB_KEYS = ["id", "at", "pool", "plan_type", "provider", "status", "skip", "miss", "est_saved_usd", "title", "model", "effort", "heartbeat_at"];
 export const STATUSES = ["ok", "failed", "timeout", "error", "skipped", "dry-run", "running"];
 export const SKIPS = ["unassigned", "needs-reading", "already-ran", "bad-run-block", "missing-cwd", "declined", "manual", "other"];
@@ -37,6 +41,7 @@ function validMinute(s) {
 export function validatePayload(p) {
   if (!isObject(p)) return "payload must be an object";
   const top = sameKeys(p, TOP_KEYS);
+  top.extra = top.extra.filter((k) => !OPTIONAL_TOP_KEYS.includes(k));
   if (top.extra.length) return `unknown field(s): ${top.extra.slice(0, 5).map((k) => k.slice(0, 40)).join(", ")}`;
   if (top.missing.length) return `missing field(s): ${top.missing.join(", ")}`;
   if (p.schema !== SCHEMA) return `schema must be ${SCHEMA}`;
@@ -65,6 +70,25 @@ export function validatePayload(p) {
     if (j.model !== null && !MODELS.includes(j.model)) return `jobs[${i}].model is not allowed`;
     if (j.effort !== null && !EFFORTS.includes(j.effort)) return `jobs[${i}].effort is not allowed`;
     if (j.heartbeat_at !== null && !validMinute(j.heartbeat_at)) return `jobs[${i}].heartbeat_at must be a UTC time rounded to the minute`;
+  }
+  if (p.plans !== undefined) {
+    if (!Array.isArray(p.plans) || p.plans.length > 50) return "plans must be a list of at most 50";
+    const num = (v, hi) => v === null || (typeof v === "number" && Number.isFinite(v) && v >= 0 && v <= hi);
+    for (let i = 0; i < p.plans.length; i++) {
+      const r = p.plans[i];
+      if (!isObject(r)) return `plans[${i}] must be an object`;
+      const k = sameKeys(r, PLAN_KEYS);
+      if (k.extra.length || k.missing.length) return `plans[${i}]: fields must be exactly ${PLAN_KEYS.join(", ")}`;
+      if (typeof r.pool !== "string" || !POOL_REF.test(r.pool)) return `plans[${i}].pool must be pool-N`;
+      if (!PLAN_TYPES.includes(r.plan_type)) return `plans[${i}].plan_type is not allowed`;
+      if (!PROVIDERS.includes(r.provider)) return `plans[${i}].provider is not allowed`;
+      if (!num(r.left_pct, 100)) return `plans[${i}].left_pct must be 0-100 or null`;
+      if (!num(r.left_usd, 1e7)) return `plans[${i}].left_usd must be a number or null`;
+      if (r.resets_at !== null && !validMinute(r.resets_at)) return `plans[${i}].resets_at must be a UTC minute or null`;
+      if (r.as_of !== null && !validMinute(r.as_of)) return `plans[${i}].as_of must be a UTC minute or null`;
+      if (r.window !== null && !WINDOW_NAMES.includes(r.window)) return `plans[${i}].window is not allowed`;
+      if (r.how !== null && !HOWS.includes(r.how)) return `plans[${i}].how is not allowed`;
+    }
   }
   return null;
 }
