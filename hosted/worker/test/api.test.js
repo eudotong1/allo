@@ -237,6 +237,11 @@ describe("dashboard", () => {
     expect(again.status).toBe(304);
     await call("/v1/jobs", { method: "POST", token, body: payload([job({ id: "h:0000000000000009", at })]), origin: null });
     const changed = await call("/v1/me/dashboard?range=week", { cookie, headers: { "If-None-Match": etag } });
+    // Re-sending the same row writes nothing and leaves the ETag alone.
+    const tag2 = changed.headers.get("ETag");
+    const resent = await (await call("/v1/jobs", { method: "POST", token, body: payload([job({ id: "h:0000000000000009", at })]), origin: null })).json();
+    expect(resent.stored).toBe(0);
+    expect((await call("/v1/me/dashboard?range=week", { cookie, headers: { "If-None-Match": tag2 } })).status).toBe(304);
     expect(changed.status).toBe(200);
     expect((await changed.json()).totals.runs).toBe(5);
   });

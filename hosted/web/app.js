@@ -2,8 +2,8 @@
 // If-None-Match, so an unchanged page costs one tiny read.
 import { api, DAYS, esc, hhmm, mdy, parseMinute, post, signInUrl, signOut } from "/common.js";
 
-const POLL_MS = 15000;
-const POLL_LIVE_MS = 3000;
+const POLL_MS = 60000; // D1 free tier: keep idle tabs cheap
+const POLL_LIVE_MS = 15000;
 const COLORS = {
   codex: "var(--codex)", chatgpt: "var(--codex)",
   claude: "var(--claude)", claude_personal: "var(--claude)", claude_team: "#C4A35A",
@@ -179,7 +179,7 @@ function runningStrip(d, lines) {
       `<span class="clock${bad ? " bad" : ""}">${bad ? esc(j.status) + " \u00b7 " : ""}${esc(agoText(j.ended_at, now))}</span></li>`;
   }).join("");
   const head = live.length
-    ? (live.length === 1 ? "One job is in flight." : live.length + " jobs are in flight.") + " Updates every few seconds."
+    ? (live.length === 1 ? "One job is in flight." : live.length + " jobs are in flight.") + " Updates every 15 seconds."
     : "Nothing is running right now.";
   return `<section class="running" aria-live="polite"><div class="running-head"><h2 class="cond">${live.length ? "Running now" : "Live"}</h2>` +
     `<p class="intro">${head}</p></div>` +
@@ -596,6 +596,5 @@ async function load() {
   if (live) window.__alloClock = setInterval(tickClocks, 1000);
 }
 
-setInterval(() => { if (!document.hidden) load(); }, POLL_MS);
 document.addEventListener("visibilitychange", () => { if (!document.hidden) load(); });
 load();

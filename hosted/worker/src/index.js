@@ -343,7 +343,12 @@ async function uploadJobs(request, env) {
       "ON CONFLICT(install_id, id) DO UPDATE SET pool=excluded.pool, plan_type=excluded.plan_type, " +
       "provider=excluded.provider, status=excluded.status, skip=excluded.skip, miss=excluded.miss, " +
       "est_saved_usd=excluded.est_saved_usd, title=excluded.title, model=excluded.model, effort=excluded.effort, " +
-      "heartbeat_at=excluded.heartbeat_at",
+      "heartbeat_at=excluded.heartbeat_at " +
+      // Re-sent identical rows write nothing (D1 bills rows written; the live watcher re-sends finished rows).
+      "WHERE jobs.status IS NOT excluded.status OR jobs.heartbeat_at IS NOT excluded.heartbeat_at OR " +
+      "jobs.est_saved_usd IS NOT excluded.est_saved_usd OR jobs.pool IS NOT excluded.pool OR jobs.provider IS NOT excluded.provider OR " +
+      "jobs.plan_type IS NOT excluded.plan_type OR jobs.skip IS NOT excluded.skip OR jobs.miss IS NOT excluded.miss OR " +
+      "jobs.title IS NOT excluded.title OR jobs.model IS NOT excluded.model OR jobs.effort IS NOT excluded.effort",
     ).bind(inst.id, j.id, inst.user_id, j.at, j.pool, j.plan_type, j.provider, j.status, j.skip, JSON.stringify(j.miss),
            j.est_saved_usd, j.title, j.model, j.effort, j.heartbeat_at),
   );
@@ -352,16 +357,21 @@ async function uploadJobs(request, env) {
       "INSERT INTO plans (install_id, pool, user_id, plan_type, provider, left_pct, left_usd, resets_at, window, as_of, how) " +
       "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(install_id, pool) DO UPDATE SET plan_type=excluded.plan_type, " +
       "provider=excluded.provider, left_pct=excluded.left_pct, left_usd=excluded.left_usd, resets_at=excluded.resets_at, " +
-      "window=excluded.window, as_of=excluded.as_of, how=excluded.how",
+      "window=excluded.window, as_of=excluded.as_of, how=excluded.how " +
+      "WHERE plans.left_pct IS NOT excluded.left_pct OR plans.left_usd IS NOT excluded.left_usd OR plans.resets_at IS NOT excluded.resets_at " +
+      "OR plans.as_of IS NOT excluded.as_of OR plans.how IS NOT excluded.how OR plans.window IS NOT excluded.window " +
+      "OR plans.provider IS NOT excluded.provider OR plans.plan_type IS NOT excluded.plan_type",
     ).bind(inst.id, r.pool, inst.user_id, r.plan_type, r.provider, r.left_pct, r.left_usd, r.resets_at, r.window, r.as_of, r.how));
   }
   stmts.push(
     env.DB.prepare("UPDATE installs SET last_upload_at = ?, window_start = ?, window_count = ? WHERE id = ?")
       .bind(iso(now), fresh ? iso(now) : inst.window_start, fresh ? 1 : inst.window_count + 1, inst.id),
-    bump(env, inst.user_id),
   );
   const res = await env.DB.batch(stmts);
   const stored = res.slice(0, body.jobs.length).reduce((n, r) => n + (r.meta.changes || 0), 0);
+  const planChanges = res.slice(body.jobs.length, res.length - 1).reduce((n, r) => n + (r.meta.changes || 0), 0);
+  // Only a real change moves the dashboard's ETag, so open tabs keep getting cheap 304s when nothing happened.
+  if (stored || planChanges) await bump(env, inst.user_id).run();
   return json({ received: body.jobs.length, stored });
 }
 
@@ -377,9 +387,9 @@ async function cliDisconnect(request, env) {
 
 async function dashboard(request, env, user, url) {
   const range = rangeFor(url.searchParams.get("range") || "week", new Date());
-  // The minute is part of the tag: "running" and "just finished" depend on the clock, not only on new data,
-  // so a job that stopped heartbeating drops off within a minute instead of sticking until the next upload.
-  const etag = `W/"${user.data_version}-${range.key}-${minuteKey(range.start).slice(0, 10)}-${minuteKey(new Date())}"`;
+  // A 5-minute clock bucket is part of the tag: "running" and "just finished" depend on the clock, not only on new data,
+  // so a job that stopped heartbeating drops off within 5 minutes instead of sticking until the next upload.
+  const etag = `W/"${user.data_version}-${range.key}-${minuteKey(range.start).slice(0, 10)}-${minuteKey(new Date(Math.floor(Date.now() / 300000) * 300000))}"`;
   if (request.headers.get("If-None-Match") === etag) {
     return new Response(null, { status: 304, headers: { ETag: etag, "Cache-Control": "private, no-cache" } });
   }
