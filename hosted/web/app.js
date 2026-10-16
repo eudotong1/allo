@@ -147,20 +147,52 @@ function fmtElapsed(sec) {
   return m > 0 ? `${m}m ${String(r).padStart(2, "0")}s` : `${r}s`;
 }
 
+// Where a job ran, with the hand-off when Grok Bot sent it: "Grok Bot → ChatGPT".
+function via(j, l) {
+  return j.dispatched_by && PROVIDER[j.dispatched_by] && !l.direct ? `${PROVIDER[j.dispatched_by]} \u2192 ${l.short}` : l.short;
+}
+
+function agoText(minute, now) {
+  const m = Math.max(0, Math.round((now.getTime() - parseMinute(minute).getTime()) / 60000));
+  return m < 1 ? "just now" : `${m} min ago`;
+}
+
+// Running now, plus what finished in the last 30 minutes, so short jobs never flash by unseen.
 function runningStrip(d, lines) {
   const live = d.running || [];
-  if (!live.length) return "";
+  const recent = d.recent || [];
+  if (!live.length && !recent.length) return "";
+  const now = new Date();
   const lineOf = Object.fromEntries(lines.map((l) => [l.key, l]));
+  const blank = { color: "var(--ink)", short: "plan", name: "plan" };
   const items = live.map((j) => {
-    const l = lineOf[j.line] || { color: "var(--ink)", short: "plan", name: "plan" };
-    const name = j.title || `#${j.n}`;
+    const l = lineOf[j.line] || blank;
     return `<li style="--c:${l.color}"><span class="pulse" aria-hidden="true"></span>` +
-      `<b>${esc(name)}</b><span class="on">${esc(l.short)}</span>` +
+      `<b>${esc(j.title || `#${j.n}`)}</b><span class="on">${esc(via(j, l))}</span>` +
       `<span class="clock" data-started="${esc(j.started_at || j.at)}">${fmtElapsed(j.seconds)}</span></li>`;
   }).join("");
-  return `<section class="running" aria-live="polite"><div class="running-head"><h2 class="cond">Running now</h2>` +
-    `<p class="intro">${live.length === 1 ? "One job is in flight." : live.length + " jobs are in flight."} Updates every few seconds.</p></div>` +
-    `<ul class="running-list">${items}</ul></section>`;
+  const done = recent.map((j) => {
+    const l = lineOf[j.line] || blank;
+    const bad = j.status !== "ok";
+    return `<li class="done" style="--c:${l.color}"><span class="dot" aria-hidden="true"></span>` +
+      `<b>${esc(j.title || "Untitled run")}</b><span class="on">${esc(via(j, l))}</span>` +
+      `<span class="clock${bad ? " bad" : ""}">${bad ? esc(j.status) + " \u00b7 " : ""}${esc(agoText(j.ended_at, now))}</span></li>`;
+  }).join("");
+  const head = live.length
+    ? (live.length === 1 ? "One job is in flight." : live.length + " jobs are in flight.") + " Updates every few seconds."
+    : "Nothing is running right now.";
+  return `<section class="running" aria-live="polite"><div class="running-head"><h2 class="cond">${live.length ? "Running now" : "Live"}</h2>` +
+    `<p class="intro">${head}</p></div>` +
+    (items ? `<ul class="running-list">${items}</ul>` : "") +
+    (done ? `<h3 class="running-sub">Finished in the last 30 min</h3><ul class="running-list recent">${done}</ul>` : "") +
+    `</section>`;
+}
+
+// Grok Bot's row: its own work, and separately what it sent to other plans. Never a copy of their numbers.
+function sentText(l) {
+  if (!l.direct || !l.sent || !l.sent.tasks) return "";
+  const to = l.sent.to.map((p) => PROVIDER[p] || p).join(", ") || "other plans";
+  return `sent ${plural(l.sent.tasks, "task")} (${plural(l.sent.runs, "run")}) to ${to}`;
 }
 
 
@@ -229,7 +261,10 @@ function limitBlock(l) {
   const lim = l.limit;
   const nr = nextReset(lim, now);
   const left = leftText(lim);
-  if (!lim || (!left && !nr)) return `<span class="lim lim-none">No reading shared yet. Turn on with <code>allo-router connect --share-readings on</code>.</span>`;
+  if (!lim || (!left && !nr)) {
+    if (l.direct) return `<span class="lim lim-none">Grok Bot's own usage isn't tracked yet, so no % left.</span>`;
+    return `<span class="lim lim-none">% left not shared yet. Turn on with <code>allo-router connect --share-readings on</code>.</span>`;
+  }
   const stale = staleReading(lim, now);
   const pct = typeof lim.left_pct === "number" ? Math.max(0, Math.min(100, lim.left_pct)) : null;
   const tag = lim.how === "auto" ? `<span class="tag auto">Auto</span>` : (lim.how === "manual" ? `<span class="tag manual">Manual</span>` : "");
@@ -249,8 +284,10 @@ function allocation(d, lines) {
   }).join("");
   const keys = lines.map((l) => {
     const pct = l.share ?? Math.round((l.jobs / total) * 100);
-    const meta = l.pool
-      ? `${plural(l.jobs, "job")} \u00b7 ${pct}%` + (l.priced ? ` \u00b7 ${money(l.saved)} API value` : " \u00b7 API value n/a")
+    const meta = l.direct
+      ? `${plural(l.jobs, "own job")} \u00b7 ${pct}%` + (sentText(l) ? ` \u00b7 ${sentText(l)}` : "")
+      : l.pool
+      ? `${plural(l.jobs, "job")} \u00b7 ${pct}%` + (l.priced ? ` \u00b7 ${money(l.saved)} API value` : (l.jobs ? " \u00b7 API value n/a (no cost reported)" : ""))
       : `${plural(l.jobs, "job")} \u00b7 ${pct}% \u00b7 missed, no plan fit`;
     return `<div><span class="sw" style="background:${l.color}"></span><b${l.pool ? "" : ' class="no"'}>${esc(l.name)}</b><span class="meta">${meta}</span>${limitBlock(l)}</div>`;
   }).join("");
@@ -319,12 +356,14 @@ function map(d, lines, now) {
   lines.forEach((l, i) => {
     const y = ys[i];
     const red = l.pool ? "" : ` style="fill:var(--reset-text)"`;
-    const counts = `${plural(l.jobs, "task")}${l.runs > l.jobs ? ` · ${plural(l.runs, "run")}` : ""}${l.missed && l.pool ? `, ${l.missed} missed` : ""}`;
+    const counts = l.direct
+      ? `${plural(l.jobs, "own task")}${sentText(l) ? ` · ${sentText(l)}` : ""}`
+      : `${plural(l.jobs, "task")}${l.runs > l.jobs ? ` · ${plural(l.runs, "run")}` : ""}${l.missed && l.pool ? `, ${l.missed} missed` : ""}`;
     const lt = leftText(l.limit);
     s += `<text x="262" y="${y - 24}" class="t-name"${red}>${esc(l.name)}<tspan class="t-num" dx="12"${red}>${counts}</tspan>${lt ? `<tspan class="t-left" dx="12">${esc(lt)}${l.limit.how === "manual" ? " (manual)" : ""}</tspan>` : ""}</text>`;
     const share = l.share ?? Math.round((l.jobs / (d.totals.jobs || 1)) * 100);
     s += `<text x="1308" y="${y + 6}" text-anchor="end" class="t-share"${red}>${share}%</text>`;
-    const cap = l.pool ? (l.priced ? `${money(l.saved)} API value (est.)` : "API value n/a") : "missed, no plan fit";
+    const cap = l.direct ? "dispatcher, no API value" : l.pool ? (l.priced ? `${money(l.saved)} API value (est.)` : "API value n/a") : "missed, no plan fit";
     s += `<text x="1308" y="${y + 26}" text-anchor="end" class="t-est">${cap}</text>`;
     let prevEnd = X0;
     let hidden = 0;

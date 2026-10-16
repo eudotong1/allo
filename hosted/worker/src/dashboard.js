@@ -23,7 +23,14 @@ export function isJunk(r) {
 
 export function summarize(rows, installs, now = new Date(), plans = []) {
   const STALE_MS = 3 * 60 * 1000; // a running row with no heartbeat for 3 minutes is treated as gone
-  const kept = rows.filter((r) => !isJunk(r) && !(r.status === "skipped" && NOT_ROUTED.includes(r.skip)));
+  // Rows whose provider the client could not tell ("other"/null) take the provider other rows on the same
+  // computer and pool carry, so the Grok Bot pool never shows up a second time as "Other, pool N".
+  const poolProv = new Map();
+  for (const r of rows) if (r.pool && r.provider && r.provider !== "other") poolProv.set(`${r.install_id}|${r.pool}`, { provider: r.provider, plan_type: r.plan_type });
+  const kept = rows.filter((r) => !isJunk(r) && !(r.status === "skipped" && NOT_ROUTED.includes(r.skip))).map((r) => {
+    const known = r.pool && (!r.provider || r.provider === "other") ? poolProv.get(`${r.install_id}|${r.pool}`) : null;
+    return known ? { ...r, provider: known.provider, plan_type: known.plan_type || r.plan_type } : r;
+  });
   // A job counts once, on the plan that ran it. Orchestrator rows (Grok Bot handing a job to another plan) are
   // not jobs of their own: they become "dispatched by" metadata on the matching job and are left out of every count.
   const isOrch = (r) => r.plan_type === "orchestrator";
@@ -35,6 +42,8 @@ export function summarize(rows, installs, now = new Date(), plans = []) {
   const isDirect = (r) => isOrch(r) && !routedKeys.has(`${r.install_id}|${r.at}|${bare(r.title)}`);
   const hasGrok = kept.some((r) => r.provider === "grok");
   const routed = kept.filter((r) => !isOrch(r) || isDirect(r));
+  // What Grok Bot handed to other plans: shown on its row as "sent", never added to its own work.
+  const sent = { runs: 0, running: 0, to: {} };
   const many = installs.length > 1;
   const names = Object.fromEntries(installs.map((i) => [i.id, i.name]));
   const lines = new Map();
@@ -89,6 +98,10 @@ export function summarize(rows, installs, now = new Date(), plans = []) {
     };
     jobs.push(row);
     if (isRunning) running.push(row);
+    if (row.dispatched_by === "grok" && !isOrch(r)) {
+      if (isRunning) sent.running += 1; else sent.runs += 1;
+      sent.to[r.provider || "other"] = (sent.to[r.provider || "other"] || 0) + (isRunning ? 0 : 1);
+    }
   });
   // Keep a Grok Bot row visible (even at 0) whenever Grok Bot shows up at all, so direct work is never hidden.
   if (hasGrok && ![...lines.values()].some((l) => l.direct)) {
@@ -121,7 +134,7 @@ export function summarize(rows, installs, now = new Date(), plans = []) {
   tasks.forEach((t, i) => { t.n = i + 1; if (!t.title && t.runs > 1) t.title = "Untitled runs"; t.usd_total = t.priced ? Math.round(t.usd_total * 100) / 100 : null; t.list.sort((a, b) => b.at.localeCompare(a.at)); });
   for (const l of ordered) { l.runs = l.jobs; const mine = tasks.filter((t) => t.line === l.key && t.status !== "running"); l.jobs = mine.length; l.ran = mine.filter((t) => t.ok > 0).length; }
   totals.jobs = tasks.filter((t) => t.status !== "running").length;
-  totals.ran = tasks.filter((t) => t.ok > 0).length;
+  totals.ran = tasks.filter((t) => t.status !== "running" && t.ok > 0).length; // same set as totals.jobs
   totals.runs = ordered.reduce((a, l) => a + l.runs, 0);
   // Whole-number shares that always add up to 100 (largest remainder).
   const tot = ordered.reduce((a, l) => a + l.jobs, 0);
@@ -137,5 +150,15 @@ export function summarize(rows, installs, now = new Date(), plans = []) {
     const r = plans.find((p) => String(p.install_id) === inst && p.pool === l.pool);
     l.limit = r ? { left_pct: r.left_pct ?? null, left_usd: r.left_usd ?? null, resets_at: r.resets_at || null, window: r.window || null, as_of: r.as_of || null, how: r.how || null } : null;
   }
-  return { totals, lines: ordered, jobs: tasks, running };
+  // Grok Bot's row: what it sent to other plans (tasks and runs), separate from its own direct work.
+  const sentTasks = tasks.filter((t) => t.dispatched_by === "grok" && t.status !== "running");
+  for (const l of ordered) if (l.direct) l.sent = { tasks: sentTasks.length, runs: sent.runs, running: sent.running, to: Object.keys(sent.to) };
+  // Finished in the last 30 minutes, newest first: keeps short jobs visible after they stop running.
+  const RECENT_MS = 30 * 60 * 1000;
+  const recent = jobs
+    .filter((j) => j.status !== "running" && (now.getTime() - Date.parse(String(j.heartbeat_at || j.at).replace(/Z$/, ":00Z"))) < RECENT_MS)
+    .sort((a, b) => String(b.heartbeat_at || b.at).localeCompare(String(a.heartbeat_at || a.at)))
+    .slice(0, 6)
+    .map((j) => ({ title: j.title, line: j.line, status: j.status, ended_at: j.heartbeat_at || j.at, dispatched_by: j.dispatched_by }));
+  return { totals, lines: ordered, jobs: tasks, running, recent };
 }

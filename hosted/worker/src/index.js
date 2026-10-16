@@ -377,7 +377,9 @@ async function cliDisconnect(request, env) {
 
 async function dashboard(request, env, user, url) {
   const range = rangeFor(url.searchParams.get("range") || "week", new Date());
-  const etag = `W/"${user.data_version}-${range.key}-${minuteKey(range.start).slice(0, 10)}"`;
+  // The minute is part of the tag: "running" and "just finished" depend on the clock, not only on new data,
+  // so a job that stopped heartbeating drops off within a minute instead of sticking until the next upload.
+  const etag = `W/"${user.data_version}-${range.key}-${minuteKey(range.start).slice(0, 10)}-${minuteKey(new Date())}"`;
   if (request.headers.get("If-None-Match") === etag) {
     return new Response(null, { status: 304, headers: { ETag: etag, "Cache-Control": "private, no-cache" } });
   }

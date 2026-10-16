@@ -215,6 +215,10 @@ button.link { font: inherit; color: inherit; background: none; border: 0; paddin
 .running-list li { display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: center; font-size: 16px; }
 .running-list .pulse { width: 10px; height: 10px; border-radius: 50%; background: var(--c, var(--ink)); box-shadow: 0 0 0 0 var(--c, var(--ink)); animation: allo-pulse 1.6s ease-out infinite; }
 .running-list .on { color: var(--muted); }
+.running-sub { font-size: 13px; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); margin: 16px 0 8px; font-weight: 700; }
+.running-list .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--c, var(--ink)); opacity: .55; }
+.running-list.recent li { font-size: 15px; }
+.running-list .clock.bad { color: var(--reset-text); }
 .running-list .clock { margin-left: auto; font-variant-numeric: tabular-nums; font-family: var(--mono); font-size: 14px; }
 @keyframes allo-pulse {
   0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--c, #111) 45%, transparent); }
