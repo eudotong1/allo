@@ -442,3 +442,41 @@ describe("untitled", () => {
     expect(d.jobs.map((t) => [t.title, t.runs])).toEqual([["Untitled runs", 3]]);
   });
 });
+
+describe("live, Grok Bot and plan rows", () => {
+  const now = new Date("2026-10-15T13:00:00Z");
+  const base = { install_id: 1, status: "ok", skip: null, miss: "[]", est_saved_usd: null, model: null, effort: null };
+  const codex = (at, title, extra = {}) => ({ ...base, pool: "pool-3", provider: "codex", plan_type: "subscription", at, title, heartbeat_at: at, ...extra });
+  const grok = (at, title, extra = {}) => ({ ...base, pool: "pool-4", provider: "grok", plan_type: "orchestrator", at, title: `Dispatch ${title}`, heartbeat_at: at, ...extra });
+
+  it("never copies ChatGPT's numbers onto Grok Bot; shows them as sent", () => {
+    const rows = [codex("2026-10-15T10:00Z", "i18n"), grok("2026-10-15T10:00Z", "i18n"), codex("2026-10-15T11:00Z", "i18n"), grok("2026-10-15T11:00Z", "i18n")];
+    const s = summarize(rows, [{ id: 1, name: "Mac" }], now);
+    const g = s.lines.find((l) => l.direct);
+    const c = s.lines.find((l) => l.provider === "codex");
+    expect(c.runs).toBe(2);
+    expect(g.jobs).toBe(0);
+    expect(g.sent).toEqual({ tasks: 1, runs: 2, running: 0, to: ["codex"] });
+  });
+
+  it("files an unlabeled row on the Grok Bot pool under Grok Bot, not 'Other, pool 4'", () => {
+    const rows = [grok("2026-10-15T10:00Z", "x"), { ...base, pool: "pool-4", provider: "other", plan_type: "subscription", at: "2026-10-15T07:05Z", title: null, heartbeat_at: null }];
+    const s = summarize(rows, [{ id: 1, name: "Mac" }], now);
+    expect(s.lines.some((l) => l.provider === "other")).toBe(false);
+    expect(s.lines.find((l) => l.direct).jobs).toBe(2);
+  });
+
+  it("keeps a running dispatched job on the strip with who sent it, and lists jobs finished in the last 30 min", () => {
+    const rows = [
+      codex("2026-10-15T12:50Z", "E2E tests", { status: "running", heartbeat_at: "2026-10-15T12:59Z" }),
+      grok("2026-10-15T12:50Z", "E2E tests", { status: "running", heartbeat_at: "2026-10-15T12:59Z" }),
+      codex("2026-10-15T12:20Z", "Docs", { heartbeat_at: "2026-10-15T12:45Z" }),
+      codex("2026-10-15T09:00Z", "Old", { heartbeat_at: "2026-10-15T09:10Z" }),
+    ];
+    const s = summarize(rows, [{ id: 1, name: "Mac" }], now);
+    expect(s.running).toHaveLength(1);
+    expect(s.running[0].dispatched_by).toBe("grok");
+    expect(s.recent.map((r) => r.title)).toEqual(["Docs"]);
+    expect(s.lines.find((l) => l.direct).sent.running).toBe(1);
+  });
+});

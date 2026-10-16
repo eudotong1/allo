@@ -38,3 +38,23 @@ def test_codex_run_info_reports_the_session_model(tmp_path):
     (d / f"rollout-{loc.strftime('%Y-%m-%dT%H-%M-%S')}-x.jsonl").write_text("\n".join(json.dumps(x) for x in lines))
     assert L.codex_run_info("/lane", started, started, root=tmp_path) == (None, "gpt-6.1-sol")
     assert L.codex_run_info("/none", started, started, root=tmp_path) == (None, None)
+
+
+def test_watch_survives_a_network_error_and_keeps_the_cursor(monkeypatch):
+    state = {"salt": "00" * 16, "server": "https://x", "token": "t", "live": {"run_log_at": "2026-10-15T12:00Z"}}
+    monkeypatch.setattr(L.up, "load_state", lambda: state)
+    monkeypatch.setattr(L.up, "save_state", lambda s: None)
+    monkeypatch.setattr(L.up, "log_upload", lambda *a: None)
+    monkeypatch.setattr(L, "build_live_jobs", lambda st, n, d, backfill=False: (st["live"].update(run_log_at="2026-10-15T13:00Z"),
+        [L.job_row(id="h:" + "0" * 16, at="2026-10-15T13:00Z", pool="pool-3", plan_type="subscription", provider="codex", status="running", title="E2E tests")])[1])
+    calls = {"n": 0}
+    def transport(*a):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise OSError("handshake timed out")
+        raise KeyboardInterrupt
+    monkeypatch.setattr(L.time, "sleep", lambda s: None)
+    out = []
+    assert L.cmd_live(["--watch"], transport=transport, out=out.append) == 0
+    assert calls["n"] == 2  # kept polling after the error
+    assert any("upload failed, retrying" in o for o in out)

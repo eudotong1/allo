@@ -417,9 +417,14 @@ def cmd_live(argv, now=None, transport=up.http, out=print):
 
     def once():
         n = datetime.now(timezone.utc) if now is None else now
+        before = dict(state.get("live") or {})
         jobs = build_live_jobs(state, n, dirs, backfill=a.backfill)
         running = sum(1 for j in jobs if j["status"] == "running")
-        sent = send(jobs, state, n, transport)
+        try:
+            sent = send(jobs, state, n, transport)
+        except Exception:
+            state["live"] = before  # not sent: keep the cursor so these events go up on the next poll
+            raise
         out(f"live: uploaded {sent} row(s) ({running} running) to {state['server']}")
         if a.backfill:
             a.backfill = False  # only the first pass in --watch
@@ -430,7 +435,10 @@ def cmd_live(argv, now=None, transport=up.http, out=print):
     out(f"live watch every {a.every:g}s; Ctrl-C to stop")
     try:
         while True:
-            once()
+            try:
+                once()
+            except (up.UploadError, OSError) as e:  # a network blip (e.g. TLS handshake timeout) must not stop live
+                out(f"live: upload failed, retrying next poll ({type(e).__name__}: {str(e)[:120]})")
             time.sleep(max(1.0, a.every))
     except KeyboardInterrupt:
         out("live watch stopped")
