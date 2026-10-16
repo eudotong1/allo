@@ -108,7 +108,25 @@ describe("upload allowlist", () => {
     expect(row).toEqual({ provider: "claude_personal", title: "Industry pages", model: "opus", effort: "high" });
   });
 
+  const plan = (o = {}) => ({ pool: "pool-1", plan_type: "subscription", provider: "codex", left_pct: 62, left_usd: null,
+    resets_at: "2026-10-16T22:30Z", window: "week", as_of: "2026-10-15T23:58Z", how: "auto", ...o });
+
+  it("stores plan readings and shows them on the plan's line", async () => {
+    const { cookie } = await devSignIn("alice");
+    const token = await connectComputer(cookie);
+    const at = new Date(Math.max(rangeFor("week", new Date()).start.getTime(), Date.now() - 3600000)).toISOString().slice(0, 16) + "Z";
+    const r = await call("/v1/jobs", { method: "POST", token, body: { ...payload([job({ at })]), plans: [plan()] }, origin: null });
+    expect(r.status).toBe(200);
+    await call("/v1/jobs", { method: "POST", token, body: { ...payload([]), plans: [plan({ left_pct: 40, how: "manual" })] }, origin: null });
+    expect(await count("plans")).toBe(1);
+    const d = await (await call("/v1/me/dashboard?range=week", { cookie })).json();
+    expect(d.lines[0].limit).toEqual({ left_pct: 40, left_usd: null, resets_at: "2026-10-16T22:30Z", window: "week", as_of: "2026-10-15T23:58Z", how: "manual" });
+  });
+
   const bad = {
+    "a plan with a label": (p) => ({ ...p, plans: [{ ...plan(), label: "Claude (work plan)" }] }),
+    "a plan over 100% left": (p) => ({ ...p, plans: [plan({ left_pct: 140 })] }),
+    "a plan with a free-text source": (p) => ({ ...p, plans: [plan({ how: "sync: claude ~/.claude.json" })] }),
     "an unknown top-level field": (p) => ({ ...p, hostname: "studio" }),
     "a task name": (p) => ({ ...p, jobs: [{ ...p.jobs[0], task_name: "Review contract" }] }),
     "a prompt": (p) => ({ ...p, jobs: [{ ...p.jobs[0], prompt: "secret" }] }),
@@ -134,6 +152,7 @@ describe("upload allowlist", () => {
       expect(body.error).toBe("rejected");
       expect(JSON.stringify(body)).not.toContain("Review contract");  // reasons never echo values back
       expect(await count("jobs")).toBe(0);
+      expect(await count("plans")).toBe(0);
     });
   }
 
