@@ -5,7 +5,11 @@
 export const SCHEMA = 1;
 export const MAX_ROWS = 500;
 export const TOP_KEYS = ["schema", "sent_at", "jobs"];
-export const OPTIONAL_TOP_KEYS = ["plans"];
+export const OPTIONAL_TOP_KEYS = ["plans", "queue", "results"];
+export const QUEUE_KEYS = ["id", "title", "pool", "provider", "priority"];
+export const RESULT_KEYS = ["id", "status"];
+export const RESULT_STATUSES = ["done", "failed"];
+export const MAX_QUEUE = 50;
 export const PLAN_KEYS = ["pool", "plan_type", "provider", "left_pct", "left_usd", "resets_at", "window", "as_of", "how"];
 export const WINDOW_NAMES = ["5h", "week"];
 export const HOWS = ["auto", "manual"];
@@ -29,6 +33,13 @@ function sameKeys(obj, keys) {
   const extra = got.filter((k) => !keys.includes(k));
   const missing = keys.filter((k) => !got.includes(k));
   return { extra, missing };
+}
+
+// Short job titles only: letters, digits, space and - _ . / : #, 1-48 characters.
+export function validTitle(t) {
+  if (t === null) return true;
+  return typeof t === "string" && t.length >= 1 && t.length <= 48 && !/[<>]/.test(t) &&
+    [...t].every((c) => c === " " || c === "-" || c === "_" || c === "." || c === "/" || c === ":" || c === "#" || (c >= "0" && c <= "9") || (c >= "A" && c <= "Z") || (c >= "a" && c <= "z"));
 }
 
 function validMinute(s) {
@@ -65,8 +76,7 @@ export function validatePayload(p) {
       return `jobs[${i}].miss is not allowed`;
     if (j.est_saved_usd !== null && (typeof j.est_saved_usd !== "number" || !Number.isFinite(j.est_saved_usd) || Math.abs(j.est_saved_usd) >= 1e7))
       return `jobs[${i}].est_saved_usd must be a number or null`;
-    if (j.title !== null && (typeof j.title !== "string" || j.title.length < 1 || j.title.length > 48 || /[<>]/.test(j.title) || ![...j.title].every((c) => c === " " || c === "-" || c === "_" || c === "." || c === "/" || c === ":" || c === "#" || (c >= "0" && c <= "9") || (c >= "A" && c <= "Z") || (c >= "a" && c <= "z"))))
-      return `jobs[${i}].title is not allowed`;
+    if (j.title !== null && !validTitle(j.title)) return `jobs[${i}].title is not allowed`;
     if (j.model !== null && !MODELS.includes(j.model)) return `jobs[${i}].model is not allowed`;
     if (j.effort !== null && !EFFORTS.includes(j.effort)) return `jobs[${i}].effort is not allowed`;
     if (j.heartbeat_at !== null && !validMinute(j.heartbeat_at)) return `jobs[${i}].heartbeat_at must be a UTC time rounded to the minute`;
@@ -88,6 +98,31 @@ export function validatePayload(p) {
       if (r.as_of !== null && !validMinute(r.as_of)) return `plans[${i}].as_of must be a UTC minute or null`;
       if (r.window !== null && !WINDOW_NAMES.includes(r.window)) return `plans[${i}].window is not allowed`;
       if (r.how !== null && !HOWS.includes(r.how)) return `plans[${i}].how is not allowed`;
+    }
+  }
+  if (p.queue !== undefined) {
+    if (!Array.isArray(p.queue) || p.queue.length > MAX_QUEUE) return `queue must be a list of at most ${MAX_QUEUE}`;
+    for (let i = 0; i < p.queue.length; i++) {
+      const q = p.queue[i];
+      if (!isObject(q)) return `queue[${i}] must be an object`;
+      const k = sameKeys(q, QUEUE_KEYS);
+      if (k.extra.length || k.missing.length) return `queue[${i}]: fields must be exactly ${QUEUE_KEYS.join(", ")}`;
+      if (typeof q.id !== "string" || !JOB_ID.test(q.id)) return `queue[${i}].id must be a hashed id`;
+      if (!validTitle(q.title)) return `queue[${i}].title is not allowed`;
+      if (q.pool !== null && (typeof q.pool !== "string" || !POOL_REF.test(q.pool))) return `queue[${i}].pool must be pool-N or null`;
+      if (q.provider !== null && !PROVIDERS.includes(q.provider)) return `queue[${i}].provider is not allowed`;
+      if (q.priority !== null && !(Number.isInteger(q.priority) && q.priority >= 0 && q.priority <= 999)) return `queue[${i}].priority must be 0-999 or null`;
+    }
+  }
+  if (p.results !== undefined) {
+    if (!Array.isArray(p.results) || p.results.length > 20) return "results must be a list of at most 20";
+    for (let i = 0; i < p.results.length; i++) {
+      const r = p.results[i];
+      if (!isObject(r)) return `results[${i}] must be an object`;
+      const k = sameKeys(r, RESULT_KEYS);
+      if (k.extra.length || k.missing.length) return `results[${i}]: fields must be exactly ${RESULT_KEYS.join(", ")}`;
+      if (typeof r.id !== "string" || !JOB_ID.test(r.id)) return `results[${i}].id must be a hashed id`;
+      if (!RESULT_STATUSES.includes(r.status)) return `results[${i}].status is not allowed`;
     }
   }
   return null;
