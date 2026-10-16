@@ -219,6 +219,10 @@ def test_allowlist_matches_the_server(tmp_path):
     assert arr("HOWS") == list(up.HOWS)
     assert arr("MODELS") == list(up.MODELS)
     assert arr("EFFORTS") == list(up.EFFORTS)
+    assert arr("QUEUE_KEYS") == list(up.QUEUE_KEYS)
+    assert arr("RESULT_KEYS") == list(up.RESULT_KEYS)
+    assert arr("RESULT_STATUSES") == list(up.RESULT_STATUSES)
+    assert f"export const MAX_QUEUE = {up.MAX_QUEUE};" in js
     assert f"export const MAX_ROWS = {up.MAX_ROWS};" in js
 
 

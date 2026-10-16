@@ -48,7 +48,12 @@ DEBOUNCE_S = 15
 
 # The allowlist. The server holds the same lists (hosted/worker/src/schema.js) and rejects anything else.
 TOP_KEYS = ("schema", "sent_at", "jobs")
-OPTIONAL_TOP_KEYS = ("plans",)
+OPTIONAL_TOP_KEYS = ("plans", "queue", "results")
+# Suggested next: titles and the suggested plan only, never prompts or commands. Results report a requested run.
+QUEUE_KEYS = ("id", "title", "pool", "provider", "priority")
+RESULT_KEYS = ("id", "status")
+RESULT_STATUSES = ("done", "failed")
+MAX_QUEUE = 50
 # One row per plan: its current reading and reset time, so the dashboard can show what is left and when it resets.
 # "how" says where the reading came from: "auto" (allo-router sync read it from the provider's own files) or
 # "manual" (typed in with allo-router set). Nothing here is ever estimated.
@@ -373,6 +378,24 @@ def check_payload(payload):
               and r["window"] in WINDOW_NAMES + (None,) and r["how"] in HOWS + (None,))
         if not ok:
             raise UploadError(f"plan {r.get('pool')!r} has a value outside the allowlist")
+    queue = payload.get("queue", [])
+    if not isinstance(queue, list) or len(queue) > MAX_QUEUE:
+        raise UploadError(f"queue must be a list of at most {MAX_QUEUE}")
+    for q in queue:
+        if not isinstance(q, dict) or set(q) != set(QUEUE_KEYS):
+            raise UploadError(f"queue keys {sorted(q) if isinstance(q, dict) else q!r} are not exactly {list(QUEUE_KEYS)}")
+        ok = (JOB_ID.match(str(q["id"])) and (q["title"] is None or (isinstance(q["title"], str) and TITLE_OK.match(q["title"])))
+              and (q["pool"] is None or POOL_REF.match(str(q["pool"]))) and q["provider"] in PROVIDERS + (None,)
+              and (q["priority"] is None or (isinstance(q["priority"], int) and not isinstance(q["priority"], bool)
+                                             and 0 <= q["priority"] <= 999)))
+        if not ok:
+            raise UploadError(f"queue item {q.get('id')!r} has a value outside the allowlist")
+    results = payload.get("results", [])
+    if not isinstance(results, list) or len(results) > 20:
+        raise UploadError("results must be a list of at most 20")
+    for r in results:
+        if not isinstance(r, dict) or set(r) != set(RESULT_KEYS) or not JOB_ID.match(str(r["id"])) or r["status"] not in RESULT_STATUSES:
+            raise UploadError("result outside the allowlist")
 
 
 # ---------- reading new runs ----------

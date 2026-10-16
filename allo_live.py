@@ -395,14 +395,101 @@ def remember_sent(jobs, state):
             del seen[k]
 
 
-def send(jobs, state, now, transport=up.http):
+# ---------- Suggested next and "Send to Grok Bot" ----------
+
+def build_queue(state, router_dirs, now):
+    """(queue rows, {queue id: (folder, task id)}). The planner's runnable jobs: title and suggested plan only.
+    Never the prompt or command; a job that already ran ok, or whose pool can't run it, is not suggested."""
+    import allo_exec
+    rows, where = [], {}
+    for here in router_dirs:
+        try:
+            cfg, tasks = allo.load(here)
+            jobs = allo_exec.select(cfg, tasks, here, now)
+        except Exception:  # a broken config folder must not stop live uploads
+            continue
+        pools = {p.get("id"): p for p in cfg.get("pools", [])}
+        for j in jobs:
+            if j["skip"] or not j["pool"]:
+                continue
+            t = j["task"]
+            qid = hid(state["salt"], ["queue", str(here), str(t["id"])])
+            pcfg = pools.get(j["pool"], {})
+            pr = t.get("priority")
+            rows.append({
+                "id": qid,
+                "title": up.short_title(t.get("name")),
+                "pool": pool_ref(state, j["pool"]),
+                "provider": up.provider(pcfg, pcfg.get("kind") or "subscription"),
+                "priority": pr if isinstance(pr, int) and not isinstance(pr, bool) and 0 <= pr <= 999 else None,
+            })
+            where[qid] = (str(here), str(t["id"]))
+            if len(rows) >= up.MAX_QUEUE:
+                return rows, where
+    return rows, where
+
+
+def queue_changed(queue, state):
+    fp = hashlib.sha256(json.dumps(queue, sort_keys=True).encode()).hexdigest()[:16]
+    return fp != (state.get("live") or {}).get("queue_fp"), fp
+
+
+def take_requests(state, transport=up.http):
+    """The normal poll for dashboard clicks: read-only on the server unless a request is waiting."""
+    status, body = transport("GET", state["server"].rstrip("/") + "/v1/requests", None, state["token"])
+    if status != 200 or not isinstance(body, dict):
+        return []
+    return [r for r in body.get("requests") or [] if isinstance(r, str) and up.JOB_ID.match(r)]
+
+
+def start_request(req_id, where, spawn=None):
+    """Run one requested job in its own process, so live polling keeps going. Exactly one job, by its id."""
+    folder, task_id = where
+    cmd = [sys.executable, str(Path(__file__).resolve()), "--run-request", folder, task_id, req_id]
+    if spawn:
+        return spawn(cmd)
+    log = open(Path(up.config_dir()) / "requests.log", "a")
+    return subprocess.Popen(cmd, stdout=log, stderr=log, start_new_session=True)
+
+
+def run_request(folder, task_id, req_id, now=None, transport=up.http, out=print, run=None):
+    """Plan only this task (the normal preview, with its usual checks), then run exactly that saved plan,
+    upload the new run row, and report done/failed for the request. Returns the result status."""
+    import tempfile
+    import allo_exec
+    here = Path(folder)
+    now = now or datetime.now(timezone.utc)
+    run = run or allo_exec.cmd_run
+    with tempfile.TemporaryDirectory() as tmp:
+        plan = str(Path(tmp) / "request-plan.json")
+        rc = run(here, ["--only", task_id, "--save-plan", plan], now, out=out)
+        if rc == 0:
+            rc = run(here, ["--plan", plan, "--execute", "--yes"], now, out=out)
+    result = "done" if rc == 0 else "failed"
+    state = up.load_state()
+    if state:
+        try:
+            up.upload_once(here, state, datetime.now(timezone.utc), transport=transport)
+        except Exception as e:
+            out(f"request {req_id}: run row upload failed ({type(e).__name__}); it goes up with the next upload")
+        payload = {"schema": up.SCHEMA, "sent_at": utc_minute(datetime.now(timezone.utc)), "jobs": [],
+                   "results": [{"id": req_id, "status": result}]}
+        up.check_payload(payload)
+        transport("POST", state["server"].rstrip("/") + "/v1/jobs", payload, state["token"])
+    out(f"request {req_id}: {result}")
+    return result
+
+
+def send(jobs, state, now, transport=up.http, queue=None):
     jobs = unsent(jobs, state)
-    if not jobs:
+    if not jobs and queue is None:
         return 0
     # Cap to MAX_ROWS: prefer running, then newest
     jobs = sorted(jobs, key=lambda j: (0 if j["status"] == "running" else 1, j["at"]), reverse=True)
     jobs = jobs[: up.MAX_ROWS]
     payload = {"schema": up.SCHEMA, "sent_at": utc_minute(now), "jobs": jobs}
+    if queue is not None:
+        payload["queue"] = queue
     up.check_payload(payload)
     status, body = transport("POST", state["server"].rstrip("/") + "/v1/jobs", payload, state["token"])
     up.log_upload(payload, status)
@@ -424,13 +511,16 @@ def default_router_dirs():
     return out
 
 
-def cmd_live(argv, now=None, transport=up.http, out=print):
+def cmd_live(argv, now=None, transport=up.http, out=print, spawn=None):
     ap = argparse.ArgumentParser(prog="allo-router live", description="Upload live lane / Grok dispatch events")
     ap.add_argument("--watch", action="store_true", help="poll until interrupted")
     ap.add_argument("--every", type=float, default=4.0, help="seconds between polls in --watch (default 4)")
     ap.add_argument("--dir", action="append", default=[], help="router folder with runs/current.json (repeatable)")
     ap.add_argument("--backfill", action="store_true", help="import all events in run.log once (not only new)")
+    ap.add_argument("--run-request", nargs=3, metavar=("FOLDER", "TASK_ID", "REQUEST_ID"), help=argparse.SUPPRESS)
     a = ap.parse_args(argv)
+    if a.run_request:
+        return 0 if run_request(*a.run_request, transport=transport, out=out) == "done" else 1
     state = up.load_state()
     if not state:
         out("Not connected. Run allo-router connect first.")
@@ -442,12 +532,25 @@ def cmd_live(argv, now=None, transport=up.http, out=print):
         before = json.loads(json.dumps(state.get("live") or {}))
         jobs = build_live_jobs(state, n, dirs, backfill=a.backfill)
         running = sum(1 for j in jobs if j["status"] == "running")
+        queue, where = build_queue(state, dirs, n)
+        changed, fp = queue_changed(queue, state)
         try:
-            sent = send(jobs, state, n, transport)
+            sent = send(jobs, state, n, transport, queue=queue if changed else None)
         except Exception:
             state["live"] = before  # not sent: keep the cursor so these events go up on the next poll
             raise
+        if changed:
+            state.setdefault("live", {})["queue_fp"] = fp
+            up.save_state(state)
         out(f"live: uploaded {sent} row(s) ({running} running) to {state['server']}")
+        # Dashboard clicks: one process per requested job; ids this computer doesn't know are reported failed.
+        for rid in take_requests(state, transport):
+            if rid in where:
+                start_request(rid, where[rid], spawn=spawn)
+                out(f"live: started requested job {rid}")
+            else:
+                p = {"schema": up.SCHEMA, "sent_at": utc_minute(n), "jobs": [], "results": [{"id": rid, "status": "failed"}]}
+                transport("POST", state["server"].rstrip("/") + "/v1/jobs", p, state["token"])
         if a.backfill:
             a.backfill = False  # only the first pass in --watch
         return 0
