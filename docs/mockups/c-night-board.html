@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Allo Router · Mockup C, Night Board</title>
+<!-- Static mockup. Example data only: every plan, job and number is made up. Not wired to /api/state. -->
+<style>
+  @font-face { font-family: "Archivo"; src: url(../fonts/archivo-latin-var.woff2) format("woff2"); font-weight: 100 900; font-stretch: 62% 125%; }
+  @font-face { font-family: "JetBrains Mono"; src: url(../fonts/jetbrains-mono-latin-var.woff2) format("woff2"); font-weight: 100 800; }
+  :root {
+    --bg: #111412; --ink: #ECE9E1; --muted: #8E968F; --rule: #2B312D; --rule2: #3B433E; --tick: #2A2F2B;
+    --codex: #7F98FF; --claude: #F0AE3C; --credit: #D884C4; --none: #5D655F;
+    --red: #F2735F; --go: #ECE9E1;
+    --sans: "Archivo", ui-sans-serif, system-ui, sans-serif;
+    --mono: "JetBrains Mono", ui-monospace, Menlo, monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--bg); color: var(--ink); }
+  body { font: 400 15px/1.45 var(--sans); font-variant-numeric: tabular-nums; -webkit-font-smoothing: antialiased; }
+  .wrap { max-width: 1440px; margin: 0 auto; padding: 0 56px 48px; }
+  .mono { font-family: var(--mono); font-size: 12.5px; }
+  .dim { color: var(--muted); }
+  .cond { font-stretch: 62%; font-variation-settings: "wdth" 62; font-weight: 760; }
+  .cap { font-size: 11.5px; font-weight: 600; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); }
+
+  header { display: flex; align-items: baseline; gap: 24px; padding: 20px 0 14px; border-bottom: 1px solid var(--rule2); }
+  .mark { font-stretch: 125%; font-variation-settings: "wdth" 125; font-weight: 800; font-size: 18px; }
+  header .ex { color: var(--red); }
+  header .sp { margin-left: auto; }
+
+  .top { display: grid; grid-template-columns: 400px minmax(0, 1fr); gap: 0; border-bottom: 1px solid var(--rule2); }
+  .count { padding: 28px 40px 28px 0; border-right: 1px solid var(--rule2); }
+  .count .t { margin: 10px 0 0; font-size: 128px; line-height: .82; letter-spacing: -0.02em; }
+  .count .t small { font-size: 40px; color: var(--muted); margin-left: 6px; letter-spacing: 0; }
+  .count p { margin: 14px 0 0; }
+  .checks { list-style: none; margin: 18px 0 0; padding: 0; }
+  .checks li { display: grid; grid-template-columns: 18px 1fr; padding: 7px 0; border-top: 1px solid var(--rule); font-size: 14px; }
+  .checks li::before { content: ""; width: 7px; height: 7px; background: var(--ink); margin-top: 7px; }
+  .checks li.no::before { background: var(--red); }
+
+  .board { padding: 24px 0 24px 40px; }
+  .board h2 { margin: 0 0 6px; }
+  table { width: 100%; border-collapse: collapse; }
+  th { text-align: left; padding: 8px 14px 8px 0; border-bottom: 1px solid var(--rule2); }
+  td { padding: 11px 14px 11px 0; border-bottom: 1px solid var(--rule); vertical-align: baseline; }
+  td.time { font-family: var(--mono); font-size: 14px; width: 74px; }
+  td.id { font-family: var(--mono); font-size: 13px; color: var(--muted); width: 44px; }
+  td.job { font-size: 16px; }
+  td.plan { white-space: nowrap; font-weight: 600; }
+  td.st { white-space: nowrap; text-align: right; font-family: var(--mono); font-size: 12.5px; letter-spacing: .04em; text-transform: uppercase; }
+  tr.live td { border-bottom-color: var(--rule2); }
+  tr.live td.time { color: var(--bg); }
+  tr.live td.time span { background: var(--ink); padding: 2px 6px; }
+  tr.live td.st { color: var(--ink); }
+  .note { display: block; font-size: 12.5px; color: var(--muted); }
+  .bad { color: var(--red); }
+
+  /* plans: a meter of 20 ticks, filled by share left. Ticks read at a glance without pretending to be precise. */
+  .plans { display: grid; grid-template-columns: repeat(4, 1fr); border-bottom: 1px solid var(--rule2); }
+  .plans > div { padding: 22px 24px 22px; border-left: 1px solid var(--rule2); }
+  .plans > div:first-child { border-left: 0; padding-left: 0; }
+  .plans h3 { margin: 0; font-size: 15px; font-weight: 600; display: flex; justify-content: space-between; }
+  .plans .v { color: var(--ink); margin: 6px 0 10px; font-size: 64px; line-height: .9; }
+  .plans .v small { font-size: 22px; color: var(--muted); margin-left: 4px; }
+  .meter { display: grid; grid-template-columns: repeat(20, 1fr); gap: 3px; height: 26px; }
+  .meter i { background: var(--tick); }
+  .plans p { margin: 10px 0 0; font-size: 13.5px; color: var(--muted); }
+  .plans p b { color: var(--ink); font-weight: 600; }
+  .plans .off h3, .plans .off .v { color: var(--none); }
+
+  .low { display: grid; grid-template-columns: minmax(0, 1fr) 400px; }
+  .ran { padding: 24px 40px 0 0; }
+  .ran td.job { font-size: 15px; }
+  .ran td { padding: 9px 14px 9px 0; }
+  .wk { padding: 24px 0 0 40px; border-left: 1px solid var(--rule2); }
+  .wk .row { display: grid; grid-template-columns: repeat(4, 1fr); margin-top: 10px; }
+  .wk .row b { display: block; font-size: 44px; line-height: 1; font-stretch: 62%; font-variation-settings: "wdth" 62; font-weight: 760; }
+  .wk .row span { font-size: 12.5px; color: var(--muted); }
+  .wk .alert b { color: var(--red); }
+  .strip { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; margin-top: 22px; }
+  .strip div { text-align: center; font-size: 11.5px; color: var(--muted); }
+  .strip i { display: block; height: 30px; background: var(--tick); margin-bottom: 4px; position: relative; }
+  .strip i b { position: absolute; inset: auto 0 0 0; background: var(--ink); }
+  .strip .today { color: var(--ink); font-weight: 700; }
+  .saved { margin-top: 22px; padding-top: 14px; border-top: 1px solid var(--rule2); }
+  .saved b { font-size: 44px; line-height: 1; font-stretch: 62%; font-variation-settings: "wdth" 62; font-weight: 760; }
+  .saved p { margin: 6px 0 0; font-size: 13px; color: var(--muted); }
+  footer { margin-top: 32px; padding-top: 12px; border-top: 1px solid var(--rule); color: var(--muted); font-size: 12.5px; }
+
+  @media (max-width: 1100px) {
+    .top, .low { grid-template-columns: 1fr; }
+    .count { border-right: 0; border-bottom: 1px solid var(--rule2); padding-right: 0; }
+    .board { padding-left: 0; } .ran { padding-right: 0; }
+    .wk { border-left: 0; padding-left: 0; border-top: 1px solid var(--rule2); margin-top: 24px; }
+    .plans { grid-template-columns: repeat(2, 1fr); }
+    .plans > div:nth-child(3) { border-left: 0; padding-left: 0; }
+    .plans > div:nth-child(n+3) { border-top: 1px solid var(--rule2); }
+  }
+  @media (max-width: 640px) {
+    .wrap { padding: 0 16px 32px; }
+    header { flex-wrap: wrap; } header .sp { margin-left: 0; width: 100%; }
+    .count .t { font-size: 96px; }
+    td.id, th.id { display: none; }
+    .board thead { display: none; }
+    .board tr, .ran tr { display: grid; grid-template-columns: 64px 1fr auto; column-gap: 10px; padding: 10px 0; border-bottom: 1px solid var(--rule); }
+    .board td, .ran td { border: 0; padding: 0; }
+    td.time { width: auto; } td.job { grid-column: 2 / -1; font-size: 15px; }
+    td.plan { grid-column: 2; font-size: 13px; } td.st { grid-column: 3; }
+    .plans { grid-template-columns: 1fr; }
+    .plans > div { border-left: 0 !important; padding-left: 0 !important; border-top: 1px solid var(--rule2); }
+    .plans > div:first-child { border-top: 0; }
+    .wk .row b { font-size: 36px; }
+    .checks .mono { white-space: normal; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <span class="mark">Allo Router</span>
+    <span class="cap ex">Example data</span>
+    <span class="mono dim">~/my-router</span>
+    <span class="sp dim">Fri 22:12 EDT · synced 22:09</span>
+  </header>
+
+  <section class="top">
+    <div class="count">
+      <span class="cap">Next run · 03:00 Sat · hours:minutes</span>
+      <p class="t cond">4:48<small>to go</small></p>
+      <p>6 jobs, reviewed at 22:05. Re-checked on fresh readings just before it starts; it runs only if every job still lands where you reviewed it.</p>
+      <ul class="checks">
+        <li><span>Plan still matches the readings</span></li>
+        <li><span>launchd allo-overnight loaded · ran 12 times, last exit 0</span></li>
+        <li class="no"><span>Claude, personal has no reading. Run <span class="mono">allo-router sync</span></span></li>
+      </ul>
+    </div>
+    <div class="board">
+      <h2 class="cap">Departures</h2>
+      <table>
+        <thead><tr><th class="cap">Time</th><th class="cap id">#</th><th class="cap">Job</th><th class="cap">Plan</th><th class="cap" style="text-align:right">Status</th></tr></thead>
+        <tbody>
+          <tr class="live"><td class="time"><span>22:09</span></td><td class="id">14</td><td class="job">Write tests for allo_sync.py edge cases<span class="note">Codex had the most left (76%) of the plans allowed this data</span></td><td class="plan" style="color:var(--codex)">Codex</td><td class="st">Running 2:41</td></tr>
+          <tr><td class="time">03:00</td><td class="id">15</td><td class="job">Tighten the README quickstart</td><td class="plan" style="color:var(--codex)">Codex</td><td class="st dim">Queued</td></tr>
+          <tr><td class="time">03:00</td><td class="id">16</td><td class="job">Fix flaky test in test_exec</td><td class="plan" style="color:var(--codex)">Codex</td><td class="st dim">Queued</td></tr>
+          <tr><td class="time">03:00</td><td class="id">17</td><td class="job">Draft replies to this week’s customer emails</td><td class="plan" style="color:var(--claude)">Claude, work</td><td class="st dim">Queued</td></tr>
+          <tr><td class="time">03:00</td><td class="id">18</td><td class="job">Summarize the board call notes</td><td class="plan" style="color:var(--claude)">Claude, work</td><td class="st dim">Queued</td></tr>
+          <tr><td class="time">03:00</td><td class="id">19</td><td class="job">Classify 2,000 support tickets</td><td class="plan" style="color:var(--credit)">API credit</td><td class="st dim">Queued</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="plans" aria-label="Plans">
+    <div>
+      <h3><span style="color:var(--codex)">Codex</span><span class="dim mono">3 jobs</span></h3>
+      <p class="v cond">76<small>%</small></p>
+      <div class="meter"><i style="background:var(--codex)"></i><i style="background:var(--codex)"></i><i style="background:var(--codex)"></i><i style="background:var(--codex)"></i><i style="background:var(--codex)"></i><i style="background:var(--codex)"></i><i style="background:var(--codex)"></i><i style="background:var(--codex)"></i><i style="background:var(--codex)"></i><i style="background:var(--codex)"></i><i style="background:var(--codex)"></i><i style="background:var(--codex)"></i><i style="background:var(--codex)"></i><i style="background:var(--codex)"></i><i style="background:var(--codex)"></i><i></i><i></i><i></i><i></i><i></i></div>
+      <p>Resets <b>Sun 02:12</b>, in 28 h. 2.7 pts an hour uses it all.</p>
+    </div>
+    <div>
+      <h3><span style="color:var(--claude)">Claude, work</span><span class="dim mono">2 jobs</span></h3>
+      <p class="v cond">41<small>%</small></p>
+      <div class="meter"><i style="background:var(--claude)"></i><i style="background:var(--claude)"></i><i style="background:var(--claude)"></i><i style="background:var(--claude)"></i><i style="background:var(--claude)"></i><i style="background:var(--claude)"></i><i style="background:var(--claude)"></i><i style="background:var(--claude)"></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+      <p>Resets <b>Tue 11:12</b>, in 3 d 13 h. 0.48 pts an hour uses it all.</p>
+    </div>
+    <div>
+      <h3><span style="color:var(--credit)">API credit</span><span class="dim mono">1 job</span></h3>
+      <p class="v cond">$180</p>
+      <div class="meter" style="grid-template-columns:1fr"><i style="height:2px;align-self:center;background:var(--credit)"></i></div>
+      <p>Resets <b>11/02</b>, in 16 d. Dollars, no weekly cap. Read by hand 2 h ago.</p>
+    </div>
+    <div class="off">
+      <h3><span>Claude, personal</span><span class="mono">0 jobs</span></h3>
+      <p class="v cond">—</p>
+      <div class="meter" style="opacity:.6"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+      <p><span class="bad">No reading, not routed.</span> Resets <b>Mon 10:12</b>.</p>
+    </div>
+  </section>
+
+  <section class="low">
+    <div class="ran">
+      <h2 class="cap" style="margin:0 0 6px">Ran today</h2>
+      <table><tbody>
+        <tr><td class="time">21:40</td><td class="id">12</td><td class="job">Refactor the pricing page copy, show the diff</td><td class="plan" style="color:var(--codex)">Codex</td><td class="st">Done · 3 pts</td></tr>
+        <tr><td class="time">21:22</td><td class="id">11</td><td class="job">Summarize customer interview notes</td><td class="plan" style="color:var(--credit)">API credit</td><td class="st">Done · $0.41</td></tr>
+        <tr><td class="time">19:03</td><td class="id">10</td><td class="job">Triage the overnight error log into issues<span class="note">Hit the 30 min limit; counted as a misroute</span></td><td class="plan" style="color:var(--claude)">Claude, work</td><td class="st bad">Timed out</td></tr>
+        <tr><td class="time">03:00</td><td class="id">9</td><td class="job">Fix type errors in allo_report.py</td><td class="plan" style="color:var(--codex)">Codex</td><td class="st">Done · 4 pts</td></tr>
+        <tr><td class="time">03:00</td><td class="id">2</td><td class="job">Overnight check <span class="dim">· daily</span></td><td class="plan" style="color:var(--claude)">Claude, work</td><td class="st">Done · 0 pts</td></tr>
+        <tr><td class="time">03:00</td><td class="id">7</td><td class="job">Weekly dependency audit<span class="note">Already ran Mon 03:00 this week</span></td><td class="plan" style="color:var(--codex)">Codex</td><td class="st dim">Skipped</td></tr>
+        <tr><td class="time">03:00</td><td class="id">8</td><td class="job">Review contract redlines<span class="note">No plan may take this job’s data</span></td><td class="plan dim">None</td><td class="st bad">Skipped</td></tr>
+      </tbody></table>
+    </div>
+    <aside class="wk">
+      <h2 class="cap" style="margin:0">This week · since Mon 10/12</h2>
+      <div class="row">
+        <div><b>34</b><span>routed</span></div>
+        <div><b>32</b><span>done</span></div>
+        <div><b>2</b><span>skipped</span></div>
+        <div class="alert"><b>2</b><span>misroutes</span></div>
+      </div>
+      <div class="strip" aria-label="Jobs per day: Mon 0, Tue 0, Wed 13, Thu 15, Fri 5">
+        <div><i></i>Mon</div><div><i></i>Tue</div><div><i><b style="height:87%"></b></i>Wed 13</div><div><i><b style="height:100%"></b></i>Thu 15</div><div class="today"><i><b style="height:33%"></b></i>Fri 5</div><div><i></i>Sat</div><div><i></i>Sun</div>
+      </div>
+      <div class="saved"><b>$84.13</b> <span class="dim">saved, estimated</span>
+        <p>Each job priced at API list price, minus what it cost on the plan it ran on. 33 jobs priced. Measured use: Codex 54 pts, Claude, work 12 pts, API credit $1.23.</p>
+      </div>
+    </aside>
+  </section>
+
+  <footer>Read-only. Reads pools.json, tasks.json, plan.json and runs.jsonl in ~/my-router. Never syncs, never starts a job. allo-router 0.5.0. Example data: every plan, job and number on this page is made up.</footer>
+</div>
+</body>
+</html>
