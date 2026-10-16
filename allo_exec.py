@@ -199,25 +199,38 @@ def previous_ok(here, plan=None):
     return done
 
 
-def select(cfg, tasks, here, now, only=None, allow_unverified=False, rerun=False):
-    """Turn the plan into jobs in priority order. Each job carries its backend or the reason it is skipped."""
+def select(cfg, tasks, here, now, only=None, allow_unverified=False, rerun=False, pool=None):
+    """Turn the plan into jobs in priority order. Each job carries its backend or the reason it is skipped.
+    `pool` overrides the planner's pick (a route chosen on the dashboard); every other check still applies, and
+    a pool that may not take the job's data tier, or does not exist, skips the job instead."""
     rows, plan, _ = allo.build_plan(cfg, tasks, now)
     flags = {r["p"]["id"]: r["flags"] for r in rows}
     pools = {p["id"]: p for p in cfg["pools"]}
     done = previous_ok(here)
     jobs = []
-    for t, pid, note, _ in plan:
+    for t, pid, note, elig in plan:
         if only and str(t["id"]) not in only:
             continue
+        forced_skip = None
+        if pool is not None:
+            if pool not in pools:
+                forced_skip = f"unknown route: no pool {pool} in pools.json"
+            elif pool not in elig:
+                forced_skip = f"route {pool} may not take this job's data tier ({t['tier']})"
+            else:
+                pid, note = pool, "route chosen on the dashboard"
         run_cfg = pools[pid].get("run") if pid else None
         cwd = t.get("cwd") or (run_cfg.get("cwd") if isinstance(run_cfg, dict) else None)
         # Jobs run in the config folder unless told otherwise, never wherever allo-router happened to be started.
         job = {"task": t, "pool": pid, "note": note, "prompt": t.get("prompt") or t["name"],
                "cwd": str(here / cwd) if cwd else str(here), "here": str(here), "backend": None, "skip": None,
                "flags": list(flags[pid]) if pid else [], "pool_kind": pools[pid]["kind"] if pid else None,
-               "period": allo.recurring_period(t, now), "sync": pools[pid].get("sync") if pid else None}
+               "period": allo.recurring_period(t, now), "sync": pools[pid].get("sync") if pid else None,
+               "eligible": list(elig)}
         key = (str(t["id"]), t["name"], job["period"])
-        if pid is None:
+        if forced_skip:
+            job["skip"] = forced_skip
+        elif pid is None:
             job["skip"] = "unassigned: no pool fits this job"
         elif flags[pid] and not allow_unverified:
             job["skip"] = (f"pool needs a fresh reading ({', '.join(flags[pid])}): "
@@ -314,7 +327,7 @@ def jobs_from_plan(plan, here, cfg, tasks, now, max_age_min):
         raise PlanError("pools.json or tasks.json changed since it was saved; preview again")
     o = plan["options"]
     current = {str(j["task"]["id"]): j for j in
-               select(cfg, tasks, here, now, set(o["only"]) if o["only"] else None, o["allow_unverified"], o["rerun"])}
+               select(cfg, tasks, here, now, set(o["only"]) if o["only"] else None, o["allow_unverified"], o["rerun"], o.get("pool"))}
     done, done_in_plan = previous_ok(here), previous_ok(here, plan["hash"])
     jobs = []
     for saved in plan["jobs"]:
@@ -363,7 +376,7 @@ def refresh_jobs(plan, here, cfg, tasks, now, max_review_age_min):
         raise PlanError("pools.json or tasks.json changed since it was reviewed; preview and review again")
     o = plan["options"]
     current = {str(j["task"]["id"]): j for j in
-               select(cfg, tasks, here, now, set(o["only"]) if o["only"] else None, o["allow_unverified"], o["rerun"])}
+               select(cfg, tasks, here, now, set(o["only"]) if o["only"] else None, o["allow_unverified"], o["rerun"], o.get("pool"))}
     jobs = []
     for saved in plan["jobs"]:
         job = current.get(saved["task_id"])
@@ -559,6 +572,7 @@ def cmd_run(here, argv, now, confirm=ask, out=print, interactive=None, after_job
     ap.add_argument("--max-plan-age", type=float, default=DEFAULT_PLAN_AGE_MIN, metavar="MINUTES",
                     help=f"refuse a saved plan older than this (default {DEFAULT_PLAN_AGE_MIN})")
     ap.add_argument("--only", help="comma-separated task ids to consider")
+    ap.add_argument("--pool", help="run the --only jobs on this pool instead of the planner's pick (checks still apply)")
     ap.add_argument("--allow-unverified", action="store_true",
                     help="also run on pools flagged STALE, NO READING, NO RESET TIME or RESET PASSED")
     ap.add_argument("--rerun", action="store_true", help="run jobs even if runs.jsonl shows they finished ok")
@@ -569,7 +583,9 @@ def cmd_run(here, argv, now, confirm=ask, out=print, interactive=None, after_job
     a = ap.parse_args(argv)
     if a.yes and not a.execute:
         ap.error("--yes only makes sense with --execute")
-    if (a.plan or a.refresh) and (a.only or a.allow_unverified or a.rerun):
+    if a.pool and not a.only:
+        ap.error("--pool needs --only: it overrides the route of specific jobs")
+    if (a.plan or a.refresh) and (a.only or a.allow_unverified or a.rerun or a.pool):
         ap.error("--only, --allow-unverified and --rerun shape the plan: pass them when previewing, not with "
                  + ("--plan" if a.plan else "--refresh"))
     if a.plan and a.save_plan:
@@ -605,8 +621,10 @@ def cmd_run(here, argv, now, confirm=ask, out=print, interactive=None, after_job
         options = None
     else:
         only = {x.strip() for x in a.only.split(",") if x.strip()} if a.only else None
-        jobs = select(cfg, tasks, here, now, only, a.allow_unverified, a.rerun)
+        jobs = select(cfg, tasks, here, now, only, a.allow_unverified, a.rerun, a.pool)
         options = {"only": sorted(only) if only else None, "allow_unverified": a.allow_unverified, "rerun": a.rerun}
+        if a.pool:
+            options["pool"] = a.pool
         out(f"RUN as of {now:%Y-%m-%d %H:%M} UTC: dry run, nothing starts.")
     out("")
     failed = run_jobs(jobs, here, a.execute, None if a.yes else confirm, out, after_job if a.execute else None)

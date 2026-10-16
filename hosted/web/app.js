@@ -188,6 +188,70 @@ function runningStrip(d, lines) {
     `</section>`;
 }
 
+// Suggested next: the planner's runnable jobs on each computer (titles and plans only). Each job has one chip per
+// plan that may take it; the planner's pick is highlighted. A click asks that computer, through the same request
+// path, to run that one job on that plan. Nothing runs by itself.
+const sending = new Set();
+const REASON = {
+  "stale-reading": "needs a fresh reading", "no-run-setup": "that plan has no run setup", "already-ran": "it already ran",
+  "not-eligible": "that plan may not take this job", "unknown-route": "that plan isn't set up on the computer",
+  "unknown-job": "the computer no longer has this job", other: "the computer refused it",
+};
+const routeColor = (p) => COLORS[p === "codex" ? "chatgpt" : p] || COLORS.other;
+const routeName = (r) => planLabel(r.provider || "other", r.pool, null);
+
+function queueSection(d) {
+  const q = d.queue || [];
+  const head = `<div class="running-head"><h2 class="cond">Suggested next</h2><p class="intro">What allo-router would run next. Pick a plan to send the job to Grok Bot; the highlighted one is allo-router\u2019s pick. Your computer picks it up within about 20 seconds and runs it there.</p></div>`;
+  if (!q.length) {
+    return `<section class="queue">${head}<p class="queue-empty">Nothing queued. When <code>tasks.json</code> on a connected computer has jobs that haven\u2019t run yet, they show up here.</p></section>`;
+  }
+  const items = q.map((j) => {
+    const key = `${j.install_id}|${j.id}`;
+    const where = j.computer || "your computer";
+    const routes = j.routes || [];
+    const chosen = routes.find((r) => r.pool === j.route);
+    const busy = sending.has(key) || j.request === "pending" || j.request === "taken";
+    let state = "";
+    if (sending.has(key)) state = `<span class="qs">Sending\u2026</span>`;
+    else if (j.request === "pending") state = `<span class="qs wait">Waiting for ${esc(where)} \u00b7 ${esc(chosen ? routeName(chosen) : "")}</span>`;
+    else if (j.request === "taken") state = `<span class="qs run"><span class="pulse" aria-hidden="true"></span>Running on ${esc(chosen ? routeName(chosen) : where)}</span>`;
+    else if (j.request === "refused") state = `<span class="qs bad">Refused on ${esc(chosen ? routeName(chosen) : "that plan")}: ${esc(REASON[j.reason] || REASON.other)}</span>`;
+    else if (j.request === "failed") state = `<span class="qs bad">Last run on ${esc(chosen ? routeName(chosen) : "that plan")} failed</span>`;
+    else if (j.request === "done") state = `<span class="qs ok">Ran on ${esc(chosen ? routeName(chosen) : "a plan")}</span>`;
+    const chips = busy ? "" : `<span class="routes" role="group" aria-label="Send ${esc(j.title || "job")} to">` + routes.map((r) => {
+      const sug = r.pool === j.pool;
+      return `<button type="button" class="route${sug ? " sug" : ""}" style="--c:${routeColor(r.provider)}" data-send="${esc(key)}" data-route="${esc(r.pool)}"` +
+        ` title="Run on ${esc(routeName(r))}${sug ? " (allo-router\u2019s pick)" : ""}"><span class="dot" aria-hidden="true"></span>${esc(routeName(r))}${sug ? `<span class="pick">pick</span>` : ""}</button>`;
+    }).join("") + `</span>`;
+    return `<li><span class="qt"><b>${esc(j.title || "Untitled job")}</b>` +
+      `<span class="on">${d.computers.length > 1 ? `${esc(where)} \u00b7 ` : ""}${j.priority != null ? `priority ${j.priority}` : ""}</span>${state}</span>` +
+      chips + `</li>`;
+  }).join("");
+  return `<section class="queue">${head}<ul class="queue-list">${items}</ul></section>`;
+}
+
+function wireQueue() {
+  for (const b of document.querySelectorAll("[data-send]")) {
+    b.onclick = async () => {
+      const key = b.getAttribute("data-send");
+      const route = b.getAttribute("data-route");
+      if (sending.has(key)) return; // one request per job; a double click is still one
+      const [install, id] = key.split("|");
+      sending.add(key);
+      render();
+      const r = await post("/v1/me/queue/run", { install_id: Number(install), id, route });
+      sending.delete(key);
+      if (r.status === 200 && data) {
+        const j = (data.queue || []).find((x) => `${x.install_id}|${x.id}` === key);
+        if (j) { j.request = r.body.status; j.route = r.body.route; }
+      }
+      etag = null;
+      render();
+    };
+  }
+}
+
 // Grok Bot's row: its own work, and separately what it sent to other plans. Never a copy of their numbers.
 function sentText(l) {
   if (!l.direct || !l.sent || !l.sent.tasks) return "";
@@ -536,7 +600,7 @@ function render() {
   const lines = styleLines(data.lines);
   const body = data.computers.length === 0
     ? empty()
-    : (lines.length || (data.running && data.running.length) ? runningStrip(data, lines) + allocation(data, lines) + chipToggle(data) + map(data, lines, now) + jobsSection(data, lines) : `<section class="empty"><h2>No jobs in this period</h2><p class="intro">Jobs show up here after <code>run --execute</code> finishes them on a connected computer.</p></section>`) +
+    : queueSection(data) + (lines.length || (data.running && data.running.length) ? runningStrip(data, lines) + allocation(data, lines) + chipToggle(data) + map(data, lines, now) + jobsSection(data, lines) : `<section class="empty"><h2>No jobs in this period</h2><p class="intro">Jobs show up here after <code>run --execute</code> finishes them on a connected computer.</p></section>`) +
       tables(data, lines) + computers(data);
   const note = `<p class="note"><b>Only job numbers, plans, outcomes and estimates reach this page.</b> Job names and everything else stay on your computer; open <code>allo-router dashboard</code> there to see them. Times are UTC.</p>`;
   document.getElementById("app").innerHTML = `${nav(data)}<div class="wrap">${note}${header(data, now)}${body}${about}
@@ -552,6 +616,7 @@ function render() {
   el.hidden = false;
   document.getElementById("signout").onclick = signOut;
   wireJobs();
+  wireQueue();
   for (const b of document.querySelectorAll("[data-chip-mode]")) {
     b.onclick = () => { chipMode = b.getAttribute("data-chip-mode"); render(); };
   }
@@ -590,8 +655,9 @@ async function load() {
   }
   render();  // a 304 still re-renders, so "now" moves along
   const live = data && data.running && data.running.length;
+  const waiting = data && (data.queue || []).some((q) => q.request === "pending" || q.request === "taken");
   if (window.__alloPoll) clearInterval(window.__alloPoll);
-  window.__alloPoll = setInterval(() => { if (!document.hidden) load(); }, live ? POLL_LIVE_MS : POLL_MS);
+  window.__alloPoll = setInterval(() => { if (!document.hidden) load(); }, live || waiting ? POLL_LIVE_MS : POLL_MS);
   if (window.__alloClock) clearInterval(window.__alloClock);
   if (live) window.__alloClock = setInterval(tickClocks, 1000);
 }

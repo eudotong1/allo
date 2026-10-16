@@ -14,6 +14,8 @@
 //   GET  /v1/me                        browser: who is signed in
 //   GET  /v1/me/dashboard?range=week|last|30d   browser: the page's data; ETag / 304 for cheap polling
 //   POST /v1/me/installs/:id/disconnect          browser: revoke a computer and delete its rows
+//   POST /v1/me/queue/run              browser: "Send to Grok Bot" for one queued job id (idempotent)
+//   GET  /v1/requests                  CLI: collect pending run requests (token auth)
 //   POST /v1/me/delete                 browser: delete the account and everything in it
 //
 // A daily cron deletes job rows older than 90 days, expired device codes and sessions, and tokens unused for 90 days.
@@ -184,6 +186,8 @@ async function revokeInstall(env, inst, keepHistory) {
     bump(env, inst.user_id),
   ];
   stmts.unshift(env.DB.prepare("DELETE FROM plans WHERE install_id = ?").bind(inst.id));
+  stmts.unshift(env.DB.prepare("DELETE FROM queue WHERE install_id = ?").bind(inst.id));
+  stmts.unshift(env.DB.prepare("DELETE FROM run_requests WHERE install_id = ?").bind(inst.id));
   if (!keepHistory) stmts.unshift(env.DB.prepare("DELETE FROM jobs WHERE install_id = ?").bind(inst.id));
   await env.DB.batch(stmts);
 }
@@ -363,16 +367,76 @@ async function uploadJobs(request, env) {
       "OR plans.provider IS NOT excluded.provider OR plans.plan_type IS NOT excluded.plan_type",
     ).bind(inst.id, r.pool, inst.user_id, r.plan_type, r.provider, r.left_pct, r.left_usd, r.resets_at, r.window, r.as_of, r.how));
   }
+  // Suggested next: sent only when it changed, and then it replaces this computer's whole queue.
+  const extra = [];
+  if (Array.isArray(body.queue)) {
+    extra.push(env.DB.prepare("DELETE FROM queue WHERE install_id = ?").bind(inst.id));
+    for (const q of body.queue) {
+      extra.push(env.DB.prepare("INSERT OR REPLACE INTO queue (install_id, id, user_id, title, pool, provider, priority, routes) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
+        .bind(inst.id, q.id, inst.user_id, q.title, q.pool, q.provider, q.priority, JSON.stringify(q.routes)));
+    }
+  }
+  // How a requested run ended. Only a request this computer took can be closed, so a result can't invent a run.
+  for (const r of body.results || []) {
+    extra.push(env.DB.prepare("UPDATE run_requests SET status = ?, reason = ?, done_at = ? WHERE install_id = ? AND job_id = ? AND status = 'taken'")
+      .bind(r.status, r.reason, iso(now), inst.id, r.id));
+  }
+  const nExtra = extra.length;
+  stmts.splice(body.jobs.length + (body.plans || []).length, 0, ...extra);
   stmts.push(
     env.DB.prepare("UPDATE installs SET last_upload_at = ?, window_start = ?, window_count = ? WHERE id = ?")
       .bind(iso(now), fresh ? iso(now) : inst.window_start, fresh ? 1 : inst.window_count + 1, inst.id),
   );
   const res = await env.DB.batch(stmts);
   const stored = res.slice(0, body.jobs.length).reduce((n, r) => n + (r.meta.changes || 0), 0);
-  const planChanges = res.slice(body.jobs.length, res.length - 1).reduce((n, r) => n + (r.meta.changes || 0), 0);
+  const planChanges = res.slice(body.jobs.length, res.length - 1).reduce((n, r) => n + (r.meta.changes || 0), 0) + (nExtra ? 1 : 0);
   // Only a real change moves the dashboard's ETag, so open tabs keep getting cheap 304s when nothing happened.
   if (stored || planChanges) await bump(env, inst.user_id).run();
   return json({ received: body.jobs.length, stored });
+}
+
+// The computer's normal poll: which "Send to Grok Bot" requests are waiting. Read-only unless one is waiting;
+// then those rows move to "taken" in the same call, so each request is handed out once.
+async function takeRequests(request, env) {
+  const inst = await tokenInstall(env, request);
+  if (!inst) return error(401, "bad_token");
+  const rows = (await env.DB.prepare("SELECT job_id, route FROM run_requests WHERE install_id = ? AND status = 'pending' LIMIT 5")
+    .bind(inst.id).all()).results;
+  if (!rows.length) return json({ requests: [] });
+  const now = iso();
+  const res = await env.DB.batch([
+    ...rows.map((r) => env.DB.prepare("UPDATE run_requests SET status = 'taken', taken_at = ? WHERE install_id = ? AND job_id = ? AND status = 'pending'")
+      .bind(now, inst.id, r.job_id)),
+    bump(env, inst.user_id),
+  ]);
+  const taken = rows.filter((_, i) => res[i].meta.changes === 1).map((r) => ({ id: r.job_id, route: r.route }));
+  return json({ requests: taken });
+}
+
+// "Send to Grok Bot" from the signed-in dashboard: one queued job id per click. A second click while the first is
+// still pending or running changes nothing. Only an id in this user's own queue is accepted.
+async function requestRun(request, env, user) {
+  const { body } = await readJson(request);
+  const ok = body && typeof body === "object" && Object.keys(body).sort().join(",") === "id,install_id,route" &&
+    Number.isInteger(body.install_id) && typeof body.id === "string" && /^h:[0-9a-f]{16}$/.test(body.id) &&
+    typeof body.route === "string" && /^pool-[0-9]{1,3}$/.test(body.route);
+  if (!ok) return error(400, "rejected", "body must be exactly {install_id, id, route}");
+  const q = await env.DB.prepare("SELECT q.id, q.routes FROM queue q JOIN installs i ON i.id = q.install_id " +
+    "WHERE q.install_id = ? AND q.id = ? AND q.user_id = ? AND i.revoked_at IS NULL").bind(body.install_id, body.id, user.id).first();
+  if (!q) return error(404, "not_in_queue");
+  // The route must be one of the plans this computer said can take this job.
+  let routes = [];
+  try { routes = JSON.parse(q.routes || "[]"); } catch { routes = []; }
+  if (!routes.some((r) => r && r.pool === body.route)) return error(400, "rejected", "route is not one of this job's plans");
+  const res = await env.DB.prepare(
+    "INSERT INTO run_requests (install_id, job_id, user_id, route, status, requested_at) VALUES (?, ?, ?, ?, 'pending', ?) " +
+    "ON CONFLICT(install_id, job_id) DO UPDATE SET status = 'pending', route = excluded.route, reason = NULL, " +
+    "requested_at = excluded.requested_at, taken_at = NULL, done_at = NULL " +
+    "WHERE run_requests.status IN ('done', 'failed', 'refused')",
+  ).bind(body.install_id, body.id, user.id, body.route, iso()).run();
+  if (res.meta.changes) await bump(env, user.id).run();
+  const row = await env.DB.prepare("SELECT status, route FROM run_requests WHERE install_id = ? AND job_id = ?").bind(body.install_id, body.id).first();
+  return json({ ok: true, status: row.status, route: row.route, new: Boolean(res.meta.changes) });
 }
 
 async function cliDisconnect(request, env) {
@@ -393,7 +457,7 @@ async function dashboard(request, env, user, url) {
   if (request.headers.get("If-None-Match") === etag) {
     return new Response(null, { status: 304, headers: { ETag: etag, "Cache-Control": "private, no-cache" } });
   }
-  const [installs, rows, spotInfo, plans] = await Promise.all([
+  const [installs, rows, spotInfo, plans, queue] = await Promise.all([
     env.DB.prepare("SELECT id, name, created_at, last_upload_at FROM installs WHERE user_id = ? AND revoked_at IS NULL AND token_hash IS NOT NULL ORDER BY created_at")
       .bind(user.id).all().then((r) => r.results),
     env.DB.prepare("SELECT install_id, id, at, pool, plan_type, provider, status, skip, miss, est_saved_usd, title, model, effort, heartbeat_at FROM jobs " +
@@ -401,6 +465,9 @@ async function dashboard(request, env, user, url) {
       .bind(user.id, minuteKey(range.start), minuteKey(range.end)).all().then((r) => r.results),
     spots(env),
     env.DB.prepare("SELECT install_id, pool, plan_type, provider, left_pct, left_usd, resets_at, window, as_of, how FROM plans WHERE user_id = ?")
+      .bind(user.id).all().then((r) => r.results),
+    env.DB.prepare("SELECT q.install_id, q.id, q.title, q.pool, q.provider, q.priority, q.routes, r.status AS request, r.route, r.reason, r.requested_at, r.done_at FROM queue q " +
+      "LEFT JOIN run_requests r ON r.install_id = q.install_id AND r.job_id = q.id WHERE q.user_id = ? ORDER BY q.priority IS NULL, q.priority, q.title LIMIT 50")
       .bind(user.id).all().then((r) => r.results),
   ]);
   const s = summarize(rows, installs, new Date(), plans);
@@ -415,6 +482,7 @@ async function dashboard(request, env, user, url) {
       spots: spotInfo,
       range: { key: range.key, label: range.label, start: iso(range.start), end: iso(range.end) },
       ...s,
+      queue: queue.map((q) => ({ ...q, routes: (() => { try { return JSON.parse(q.routes || "[]"); } catch { return []; } })(), computer: installs.find((i) => i.id === q.install_id)?.name || null })),
       computers,
     },
     200,
@@ -426,6 +494,8 @@ async function deleteAccount(env, user, url) {
   await env.DB.batch([
     env.DB.prepare("DELETE FROM jobs WHERE user_id = ?").bind(user.id),
     env.DB.prepare("DELETE FROM plans WHERE user_id = ?").bind(user.id),
+    env.DB.prepare("DELETE FROM queue WHERE user_id = ?").bind(user.id),
+    env.DB.prepare("DELETE FROM run_requests WHERE user_id = ?").bind(user.id),
     env.DB.prepare("DELETE FROM installs WHERE user_id = ?").bind(user.id),
     env.DB.prepare("DELETE FROM sessions WHERE user_id = ?").bind(user.id),
     env.DB.prepare("DELETE FROM device_codes WHERE user_id = ?").bind(user.id),
@@ -465,6 +535,7 @@ async function route(request, env) {
   if (p === "/v1/device/token" && m === "POST") return deviceToken(request, env);
   if (p === "/v1/jobs" && m === "POST") return uploadJobs(request, env);
   if (p === "/v1/disconnect" && m === "POST") return cliDisconnect(request, env);
+  if (p === "/v1/requests" && m === "GET") return takeRequests(request, env);
 
   // Everything below needs a browser session.
   if (m === "POST" && !sameOrigin(request, url)) return error(403, "bad_origin");
@@ -478,6 +549,7 @@ async function route(request, env) {
   if (p === "/v1/me" && m === "GET") return json({ login: user.login, created_at: user.created_at });
   if (p === "/v1/me/dashboard" && m === "GET") return dashboard(request, env, user, url);
   if (p === "/v1/me/delete" && m === "POST") return deleteAccount(env, user, url);
+  if (p === "/v1/me/queue/run" && m === "POST") return requestRun(request, env, user);
   let r;
   if ((r = /^\/v1\/device\/([A-Za-z]{4}-[A-Za-z]{4})$/.exec(p)) && m === "GET") return deviceLookup(env, user, r[1]);
   if (p === "/v1/device/approve" && m === "POST") return deviceDecide(request, env, user, true);
