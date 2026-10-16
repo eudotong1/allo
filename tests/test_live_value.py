@@ -58,3 +58,23 @@ def test_watch_survives_a_network_error_and_keeps_the_cursor(monkeypatch):
     assert L.cmd_live(["--watch"], transport=transport, out=out.append) == 0
     assert calls["n"] == 2  # kept polling after the error
     assert any("upload failed, retrying" in o for o in out)
+
+
+def test_send_skips_rows_already_accepted():
+    state = {"server": "https://x", "token": "t", "live": {}}
+    calls = []
+    def transport(m, url, payload, tok):
+        calls.append(len(payload["jobs"]))
+        return 200, {}
+    import allo_upload as up
+    orig = (up.save_state, up.log_upload)
+    up.save_state, up.log_upload = (lambda s: None), (lambda *a: None)
+    try:
+        now = datetime(2026, 10, 15, 13, 0, tzinfo=timezone.utc)
+        row = L.job_row(id="h:" + "1" * 16, at="2026-10-15T12:00Z", pool="pool-3", plan_type="subscription", provider="codex", status="ok", title="Docs")
+        assert L.send([row], state, now, transport) == 1
+        assert L.send([row], state, now, transport) == 0  # identical: nothing sent
+        assert L.send([{**row, "status": "failed", "miss": ["failed"]}], state, now, transport) == 1
+    finally:
+        up.save_state, up.log_upload = orig
+    assert calls == [1, 1]

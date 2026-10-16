@@ -375,7 +375,28 @@ def build_live_jobs(state, now: datetime, router_dirs: list[Path], *, backfill: 
     return list(best.values())
 
 
+def _fp(j) -> str:
+    return hashlib.sha256(json.dumps(j, sort_keys=True).encode()).hexdigest()[:12]
+
+
+def unsent(jobs, state):
+    """Only rows that changed since they were last accepted: re-sending identical finished rows every poll
+    used most of the D1 daily write budget."""
+    seen = (state.get("live") or {}).get("sent") or {}
+    return [j for j in jobs if seen.get(j["id"]) != _fp(j)]
+
+
+def remember_sent(jobs, state):
+    seen = state.setdefault("live", {}).setdefault("sent", {})
+    for j in jobs:
+        seen[j["id"]] = _fp(j)
+    if len(seen) > 2000:  # keep the state file small: drop the oldest entries
+        for k in list(seen)[: len(seen) - 2000]:
+            del seen[k]
+
+
 def send(jobs, state, now, transport=up.http):
+    jobs = unsent(jobs, state)
     if not jobs:
         return 0
     # Cap to MAX_ROWS: prefer running, then newest
@@ -387,6 +408,7 @@ def send(jobs, state, now, transport=up.http):
     up.log_upload(payload, status)
     if status != 200:
         raise up.UploadError(f"upload HTTP {status}: {body}")
+    remember_sent(jobs, state)
     up.save_state(state)
     return len(jobs)
 
@@ -417,7 +439,7 @@ def cmd_live(argv, now=None, transport=up.http, out=print):
 
     def once():
         n = datetime.now(timezone.utc) if now is None else now
-        before = dict(state.get("live") or {})
+        before = json.loads(json.dumps(state.get("live") or {}))
         jobs = build_live_jobs(state, n, dirs, backfill=a.backfill)
         running = sum(1 for j in jobs if j["status"] == "running")
         try:
