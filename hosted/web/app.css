@@ -290,3 +290,28 @@ details.task > summary:hover { background: rgba(0,0,0,.03); }
   .rows > div { grid-template-columns: 1fr !important; row-gap: 4px; }
   .rows dd { margin: 0; }
 }
+
+/* Suggested next */
+.queue { margin: 28px 0 8px; padding: 18px 22px; border: 1px solid var(--rule); }
+.queue .running-head h2 { font-size: 28px; }
+.queue-empty { margin: 4px 0 0; color: var(--muted); }
+.queue-list { list-style: none; margin: 0; padding: 0; }
+.queue-list li { display: flex; align-items: center; gap: 12px 16px; padding: 12px 0; border-top: 1px solid var(--rule); }
+.queue-list li:first-child { border-top: 0; }
+.queue-list .sw { width: 12px; height: 12px; flex: none; }
+.queue-list .qt { display: flex; flex-wrap: wrap; gap: 4px 14px; align-items: baseline; flex: 1; min-width: 0; font-size: 16px; }
+.queue-list .on { color: var(--muted); font-size: 14px; }
+.queue-list .qa { display: flex; align-items: center; gap: 12px; flex: none; }
+.queue-list .qs { font-size: 14px; color: var(--muted); display: inline-flex; align-items: center; gap: 8px; }
+.queue-list .qs.run { color: var(--ink); font-weight: 700; }
+.queue-list .qs.bad { color: var(--reset-text); }
+.queue-list .qs .pulse { width: 9px; height: 9px; border-radius: 50%; background: var(--ink); animation: allo-pulse 1.6s ease-out infinite; }
+.send { font: 700 14px/1 var(--sans, inherit); padding: 10px 14px; background: var(--ink); color: var(--paper); border: 0; cursor: pointer; white-space: nowrap; }
+.send:hover { opacity: .85; }
+.send:focus-visible { outline: 3px solid var(--chatgpt, #2449E8); outline-offset: 2px; }
+@media (max-width: 600px) {
+  .queue { padding: 16px; }
+  .queue-list li { flex-wrap: wrap; }
+  .queue-list .qa { width: 100%; justify-content: space-between; padding-left: 28px; }
+  .send { padding: 12px 16px; }
+}

@@ -485,3 +485,69 @@ describe("live, Grok Bot and plan rows", () => {
     expect(s.lines.find((l) => l.direct).sent.running).toBe(1);
   });
 });
+
+describe("suggested next and Send to Grok Bot", () => {
+  const Q = (over = {}) => ({ id: "h:00000000000000aa", title: "Docs pass", pool: "pool-2", provider: "claude_team", priority: 1, ...over });
+  const withQueue = (queue, extra = {}) => ({ ...payload([]), queue, ...extra });
+
+  async function setup() {
+    const { cookie } = await devSignIn("alice");
+    const token = await connectComputer(cookie);
+    const inst = await env.DB.prepare("SELECT id FROM installs").first();
+    return { cookie, token, install_id: inst.id };
+  }
+
+  it("stores titles and suggested plan only, replaces the queue, and rejects prompts", async () => {
+    const { cookie, token } = await setup();
+    expect((await call("/v1/jobs", { method: "POST", token, body: withQueue([Q(), Q({ id: "h:00000000000000bb", title: "Blog", priority: 2 })]), origin: null })).status).toBe(200);
+    let d = await (await call("/v1/me/dashboard", { cookie })).json();
+    expect(d.queue.map((q) => q.title)).toEqual(["Docs pass", "Blog"]);
+    await call("/v1/jobs", { method: "POST", token, body: withQueue([Q({ id: "h:00000000000000bb", title: "Blog" })]), origin: null });
+    d = await (await call("/v1/me/dashboard", { cookie })).json();
+    expect(d.queue.map((q) => q.title)).toEqual(["Blog"]);
+    const bad = await call("/v1/jobs", { method: "POST", token, body: withQueue([{ ...Q(), prompt: "rm -rf" }]), origin: null });
+    expect(bad.status).toBe(400);
+    await call("/v1/jobs", { method: "POST", token, body: withQueue([]), origin: null });
+    expect((await (await call("/v1/me/dashboard", { cookie })).json()).queue).toEqual([]);
+  });
+
+  it("needs a session and same origin, and only accepts ids in the user's own queue", async () => {
+    const { cookie, token, install_id } = await setup();
+    await call("/v1/jobs", { method: "POST", token, body: withQueue([Q()]), origin: null });
+    expect((await call("/v1/me/queue/run", { method: "POST", body: { install_id, id: Q().id } })).status).toBe(401);
+    expect((await call("/v1/me/queue/run", { method: "POST", cookie, origin: "https://evil.example", body: { install_id, id: Q().id } })).status).toBe(403);
+    expect((await call("/v1/me/queue/run", { method: "POST", cookie, body: { install_id, id: "h:ffffffffffffffff" } })).status).toBe(404);
+    expect((await call("/v1/me/queue/run", { method: "POST", cookie, body: { install_id, id: Q().id, cmd: "x" } })).status).toBe(400);
+    const bob = await devSignIn("bob");
+    expect((await call("/v1/me/queue/run", { method: "POST", cookie: bob.cookie, body: { install_id, id: Q().id } })).status).toBe(404);
+  });
+
+  it("a double click is one request; the computer takes it once and reports the result", async () => {
+    const { cookie, token, install_id } = await setup();
+    await call("/v1/jobs", { method: "POST", token, body: withQueue([Q()]), origin: null });
+    const a = await (await call("/v1/me/queue/run", { method: "POST", cookie, body: { install_id, id: Q().id } })).json();
+    const b = await (await call("/v1/me/queue/run", { method: "POST", cookie, body: { install_id, id: Q().id } })).json();
+    expect([a.new, b.new, b.status]).toEqual([true, false, "pending"]);
+    expect(await count("run_requests")).toBe(1);
+    expect((await call("/v1/requests")).status).toBe(401);
+    expect(await (await call("/v1/requests", { token })).json()).toEqual({ requests: [Q().id] });
+    expect(await (await call("/v1/requests", { token })).json()).toEqual({ requests: [] });
+    const c = await (await call("/v1/me/queue/run", { method: "POST", cookie, body: { install_id, id: Q().id } })).json();
+    expect([c.new, c.status]).toEqual([false, "taken"]);
+    let d = await (await call("/v1/me/dashboard", { cookie })).json();
+    expect(d.queue[0].request).toBe("taken");
+    await call("/v1/jobs", { method: "POST", token, body: { ...payload([]), results: [{ id: Q().id, status: "done" }] }, origin: null });
+    d = await (await call("/v1/me/dashboard", { cookie })).json();
+    expect(d.queue[0].request).toBe("done");
+    // A result for a request that was never taken changes nothing.
+    await call("/v1/jobs", { method: "POST", token, body: { ...payload([]), results: [{ id: "h:ffffffffffffffff", status: "failed" }] }, origin: null });
+    expect(await count("run_requests")).toBe(1);
+  });
+
+  it("polling with nothing waiting writes nothing", async () => {
+    const { token } = await setup();
+    const before = (await env.DB.prepare("SELECT data_version FROM users").first()).data_version;
+    for (let i = 0; i < 3; i++) expect(await (await call("/v1/requests", { token })).json()).toEqual({ requests: [] });
+    expect((await env.DB.prepare("SELECT data_version FROM users").first()).data_version).toBe(before);
+  });
+});
