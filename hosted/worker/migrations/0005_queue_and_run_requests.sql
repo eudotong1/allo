@@ -8,6 +8,7 @@ CREATE TABLE queue (
   pool TEXT,
   provider TEXT,
   priority INTEGER,
+  routes TEXT,                     -- JSON [{pool, provider}]: the plans this job may run on, from the computer
   PRIMARY KEY (install_id, id)
 );
 CREATE INDEX queue_user ON queue(user_id);
@@ -18,7 +19,9 @@ CREATE TABLE run_requests (
   install_id INTEGER NOT NULL REFERENCES installs(id) ON DELETE CASCADE,
   job_id TEXT NOT NULL,
   user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  status TEXT NOT NULL,            -- pending | taken | done | failed
+  route TEXT NOT NULL,             -- pool-N the user picked; must be one of the queue row's routes
+  status TEXT NOT NULL,            -- pending | taken | done | failed | refused
+  reason TEXT,                     -- why it was refused or failed (stale-reading, no-run-setup, ...)
   requested_at TEXT NOT NULL,
   taken_at TEXT,
   done_at TEXT,

@@ -487,7 +487,8 @@ describe("live, Grok Bot and plan rows", () => {
 });
 
 describe("suggested next and Send to Grok Bot", () => {
-  const Q = (over = {}) => ({ id: "h:00000000000000aa", title: "Docs pass", pool: "pool-2", provider: "claude_team", priority: 1, ...over });
+  const R = [{ pool: "pool-1", provider: "claude_personal" }, { pool: "pool-2", provider: "claude_team" }, { pool: "pool-3", provider: "codex" }];
+  const Q = (over = {}) => ({ id: "h:00000000000000aa", title: "Docs pass", pool: "pool-2", provider: "claude_team", priority: 1, routes: R, ...over });
   const withQueue = (queue, extra = {}) => ({ ...payload([]), queue, ...extra });
 
   async function setup() {
@@ -514,34 +515,51 @@ describe("suggested next and Send to Grok Bot", () => {
   it("needs a session and same origin, and only accepts ids in the user's own queue", async () => {
     const { cookie, token, install_id } = await setup();
     await call("/v1/jobs", { method: "POST", token, body: withQueue([Q()]), origin: null });
-    expect((await call("/v1/me/queue/run", { method: "POST", body: { install_id, id: Q().id } })).status).toBe(401);
-    expect((await call("/v1/me/queue/run", { method: "POST", cookie, origin: "https://evil.example", body: { install_id, id: Q().id } })).status).toBe(403);
-    expect((await call("/v1/me/queue/run", { method: "POST", cookie, body: { install_id, id: "h:ffffffffffffffff" } })).status).toBe(404);
-    expect((await call("/v1/me/queue/run", { method: "POST", cookie, body: { install_id, id: Q().id, cmd: "x" } })).status).toBe(400);
+    expect((await call("/v1/me/queue/run", { method: "POST", body: { install_id, id: Q().id, route: "pool-2" } })).status).toBe(401);
+    expect((await call("/v1/me/queue/run", { method: "POST", cookie, origin: "https://evil.example", body: { install_id, id: Q().id, route: "pool-2" } })).status).toBe(403);
+    expect((await call("/v1/me/queue/run", { method: "POST", cookie, body: { install_id, id: "h:ffffffffffffffff", route: "pool-2" } })).status).toBe(404);
+    expect((await call("/v1/me/queue/run", { method: "POST", cookie, body: { install_id, id: Q().id, route: "pool-2", cmd: "x" } })).status).toBe(400);
     const bob = await devSignIn("bob");
-    expect((await call("/v1/me/queue/run", { method: "POST", cookie: bob.cookie, body: { install_id, id: Q().id } })).status).toBe(404);
+    expect((await call("/v1/me/queue/run", { method: "POST", cookie: bob.cookie, body: { install_id, id: Q().id, route: "pool-2" } })).status).toBe(404);
   });
 
   it("a double click is one request; the computer takes it once and reports the result", async () => {
     const { cookie, token, install_id } = await setup();
     await call("/v1/jobs", { method: "POST", token, body: withQueue([Q()]), origin: null });
-    const a = await (await call("/v1/me/queue/run", { method: "POST", cookie, body: { install_id, id: Q().id } })).json();
-    const b = await (await call("/v1/me/queue/run", { method: "POST", cookie, body: { install_id, id: Q().id } })).json();
+    const a = await (await call("/v1/me/queue/run", { method: "POST", cookie, body: { install_id, id: Q().id, route: "pool-2" } })).json();
+    const b = await (await call("/v1/me/queue/run", { method: "POST", cookie, body: { install_id, id: Q().id, route: "pool-2" } })).json();
     expect([a.new, b.new, b.status]).toEqual([true, false, "pending"]);
     expect(await count("run_requests")).toBe(1);
     expect((await call("/v1/requests")).status).toBe(401);
-    expect(await (await call("/v1/requests", { token })).json()).toEqual({ requests: [Q().id] });
+    expect(await (await call("/v1/requests", { token })).json()).toEqual({ requests: [{ id: Q().id, route: "pool-2" }] });
     expect(await (await call("/v1/requests", { token })).json()).toEqual({ requests: [] });
-    const c = await (await call("/v1/me/queue/run", { method: "POST", cookie, body: { install_id, id: Q().id } })).json();
+    const c = await (await call("/v1/me/queue/run", { method: "POST", cookie, body: { install_id, id: Q().id, route: "pool-2" } })).json();
     expect([c.new, c.status]).toEqual([false, "taken"]);
     let d = await (await call("/v1/me/dashboard", { cookie })).json();
     expect(d.queue[0].request).toBe("taken");
-    await call("/v1/jobs", { method: "POST", token, body: { ...payload([]), results: [{ id: Q().id, status: "done" }] }, origin: null });
+    await call("/v1/jobs", { method: "POST", token, body: { ...payload([]), results: [{ id: Q().id, status: "done", reason: null }] }, origin: null });
     d = await (await call("/v1/me/dashboard", { cookie })).json();
     expect(d.queue[0].request).toBe("done");
     // A result for a request that was never taken changes nothing.
-    await call("/v1/jobs", { method: "POST", token, body: { ...payload([]), results: [{ id: "h:ffffffffffffffff", status: "failed" }] }, origin: null });
+    await call("/v1/jobs", { method: "POST", token, body: { ...payload([]), results: [{ id: "h:ffffffffffffffff", status: "failed", reason: null }] }, origin: null });
     expect(await count("run_requests")).toBe(1);
+  });
+
+  it("only accepts a route that is one of the job's plans, and keeps the first route on a double click", async () => {
+    const { cookie, token, install_id } = await setup();
+    await call("/v1/jobs", { method: "POST", token, body: withQueue([Q()]), origin: null });
+    expect((await call("/v1/me/queue/run", { method: "POST", cookie, body: { install_id, id: Q().id, route: "pool-9" } })).status).toBe(400);
+    expect((await call("/v1/me/queue/run", { method: "POST", cookie, body: { install_id, id: Q().id, route: "grok" } })).status).toBe(400);
+    const a = await (await call("/v1/me/queue/run", { method: "POST", cookie, body: { install_id, id: Q().id, route: "pool-3" } })).json();
+    const b = await (await call("/v1/me/queue/run", { method: "POST", cookie, body: { install_id, id: Q().id, route: "pool-1" } })).json();
+    expect([a.route, b.route, b.new]).toEqual(["pool-3", "pool-3", false]);
+    expect(await (await call("/v1/requests", { token })).json()).toEqual({ requests: [{ id: Q().id, route: "pool-3" }] });
+    await call("/v1/jobs", { method: "POST", token, body: { ...payload([]), results: [{ id: Q().id, status: "refused", reason: "stale-reading" }] }, origin: null });
+    const d = await (await call("/v1/me/dashboard", { cookie })).json();
+    expect([d.queue[0].request, d.queue[0].reason, d.queue[0].routes.length]).toEqual(["refused", "stale-reading", 3]);
+    // After a refusal, another route can be picked.
+    const c = await (await call("/v1/me/queue/run", { method: "POST", cookie, body: { install_id, id: Q().id, route: "pool-1" } })).json();
+    expect([c.new, c.route, c.status]).toEqual([true, "pool-1", "pending"]);
   });
 
   it("polling with nothing waiting writes nothing", async () => {

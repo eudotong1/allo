@@ -372,14 +372,14 @@ async function uploadJobs(request, env) {
   if (Array.isArray(body.queue)) {
     extra.push(env.DB.prepare("DELETE FROM queue WHERE install_id = ?").bind(inst.id));
     for (const q of body.queue) {
-      extra.push(env.DB.prepare("INSERT OR REPLACE INTO queue (install_id, id, user_id, title, pool, provider, priority) VALUES (?, ?, ?, ?, ?, ?, ?)")
-        .bind(inst.id, q.id, inst.user_id, q.title, q.pool, q.provider, q.priority));
+      extra.push(env.DB.prepare("INSERT OR REPLACE INTO queue (install_id, id, user_id, title, pool, provider, priority, routes) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
+        .bind(inst.id, q.id, inst.user_id, q.title, q.pool, q.provider, q.priority, JSON.stringify(q.routes)));
     }
   }
   // How a requested run ended. Only a request this computer took can be closed, so a result can't invent a run.
   for (const r of body.results || []) {
-    extra.push(env.DB.prepare("UPDATE run_requests SET status = ?, done_at = ? WHERE install_id = ? AND job_id = ? AND status = 'taken'")
-      .bind(r.status, iso(now), inst.id, r.id));
+    extra.push(env.DB.prepare("UPDATE run_requests SET status = ?, reason = ?, done_at = ? WHERE install_id = ? AND job_id = ? AND status = 'taken'")
+      .bind(r.status, r.reason, iso(now), inst.id, r.id));
   }
   const nExtra = extra.length;
   stmts.splice(body.jobs.length + (body.plans || []).length, 0, ...extra);
@@ -400,7 +400,7 @@ async function uploadJobs(request, env) {
 async function takeRequests(request, env) {
   const inst = await tokenInstall(env, request);
   if (!inst) return error(401, "bad_token");
-  const rows = (await env.DB.prepare("SELECT job_id FROM run_requests WHERE install_id = ? AND status = 'pending' LIMIT 5")
+  const rows = (await env.DB.prepare("SELECT job_id, route FROM run_requests WHERE install_id = ? AND status = 'pending' LIMIT 5")
     .bind(inst.id).all()).results;
   if (!rows.length) return json({ requests: [] });
   const now = iso();
@@ -409,7 +409,7 @@ async function takeRequests(request, env) {
       .bind(now, inst.id, r.job_id)),
     bump(env, inst.user_id),
   ]);
-  const taken = rows.filter((_, i) => res[i].meta.changes === 1).map((r) => r.job_id);
+  const taken = rows.filter((_, i) => res[i].meta.changes === 1).map((r) => ({ id: r.job_id, route: r.route }));
   return json({ requests: taken });
 }
 
@@ -417,20 +417,26 @@ async function takeRequests(request, env) {
 // still pending or running changes nothing. Only an id in this user's own queue is accepted.
 async function requestRun(request, env, user) {
   const { body } = await readJson(request);
-  const ok = body && typeof body === "object" && Object.keys(body).sort().join(",") === "id,install_id" &&
-    Number.isInteger(body.install_id) && typeof body.id === "string" && /^h:[0-9a-f]{16}$/.test(body.id);
-  if (!ok) return error(400, "rejected", "body must be exactly {install_id, id}");
-  const q = await env.DB.prepare("SELECT q.id FROM queue q JOIN installs i ON i.id = q.install_id " +
+  const ok = body && typeof body === "object" && Object.keys(body).sort().join(",") === "id,install_id,route" &&
+    Number.isInteger(body.install_id) && typeof body.id === "string" && /^h:[0-9a-f]{16}$/.test(body.id) &&
+    typeof body.route === "string" && /^pool-[0-9]{1,3}$/.test(body.route);
+  if (!ok) return error(400, "rejected", "body must be exactly {install_id, id, route}");
+  const q = await env.DB.prepare("SELECT q.id, q.routes FROM queue q JOIN installs i ON i.id = q.install_id " +
     "WHERE q.install_id = ? AND q.id = ? AND q.user_id = ? AND i.revoked_at IS NULL").bind(body.install_id, body.id, user.id).first();
   if (!q) return error(404, "not_in_queue");
+  // The route must be one of the plans this computer said can take this job.
+  let routes = [];
+  try { routes = JSON.parse(q.routes || "[]"); } catch { routes = []; }
+  if (!routes.some((r) => r && r.pool === body.route)) return error(400, "rejected", "route is not one of this job's plans");
   const res = await env.DB.prepare(
-    "INSERT INTO run_requests (install_id, job_id, user_id, status, requested_at) VALUES (?, ?, ?, 'pending', ?) " +
-    "ON CONFLICT(install_id, job_id) DO UPDATE SET status = 'pending', requested_at = excluded.requested_at, taken_at = NULL, done_at = NULL " +
-    "WHERE run_requests.status IN ('done', 'failed')",
-  ).bind(body.install_id, body.id, user.id, iso()).run();
+    "INSERT INTO run_requests (install_id, job_id, user_id, route, status, requested_at) VALUES (?, ?, ?, ?, 'pending', ?) " +
+    "ON CONFLICT(install_id, job_id) DO UPDATE SET status = 'pending', route = excluded.route, reason = NULL, " +
+    "requested_at = excluded.requested_at, taken_at = NULL, done_at = NULL " +
+    "WHERE run_requests.status IN ('done', 'failed', 'refused')",
+  ).bind(body.install_id, body.id, user.id, body.route, iso()).run();
   if (res.meta.changes) await bump(env, user.id).run();
-  const row = await env.DB.prepare("SELECT status FROM run_requests WHERE install_id = ? AND job_id = ?").bind(body.install_id, body.id).first();
-  return json({ ok: true, status: row.status, new: Boolean(res.meta.changes) });
+  const row = await env.DB.prepare("SELECT status, route FROM run_requests WHERE install_id = ? AND job_id = ?").bind(body.install_id, body.id).first();
+  return json({ ok: true, status: row.status, route: row.route, new: Boolean(res.meta.changes) });
 }
 
 async function cliDisconnect(request, env) {
@@ -460,7 +466,7 @@ async function dashboard(request, env, user, url) {
     spots(env),
     env.DB.prepare("SELECT install_id, pool, plan_type, provider, left_pct, left_usd, resets_at, window, as_of, how FROM plans WHERE user_id = ?")
       .bind(user.id).all().then((r) => r.results),
-    env.DB.prepare("SELECT q.install_id, q.id, q.title, q.pool, q.provider, q.priority, r.status AS request, r.requested_at, r.done_at FROM queue q " +
+    env.DB.prepare("SELECT q.install_id, q.id, q.title, q.pool, q.provider, q.priority, q.routes, r.status AS request, r.route, r.reason, r.requested_at, r.done_at FROM queue q " +
       "LEFT JOIN run_requests r ON r.install_id = q.install_id AND r.job_id = q.id WHERE q.user_id = ? ORDER BY q.priority IS NULL, q.priority, q.title LIMIT 50")
       .bind(user.id).all().then((r) => r.results),
   ]);
@@ -476,7 +482,7 @@ async function dashboard(request, env, user, url) {
       spots: spotInfo,
       range: { key: range.key, label: range.label, start: iso(range.start), end: iso(range.end) },
       ...s,
-      queue: queue.map((q) => ({ ...q, computer: installs.find((i) => i.id === q.install_id)?.name || null })),
+      queue: queue.map((q) => ({ ...q, routes: (() => { try { return JSON.parse(q.routes || "[]"); } catch { return []; } })(), computer: installs.find((i) => i.id === q.install_id)?.name || null })),
       computers,
     },
     200,

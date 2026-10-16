@@ -6,9 +6,12 @@ export const SCHEMA = 1;
 export const MAX_ROWS = 500;
 export const TOP_KEYS = ["schema", "sent_at", "jobs"];
 export const OPTIONAL_TOP_KEYS = ["plans", "queue", "results"];
-export const QUEUE_KEYS = ["id", "title", "pool", "provider", "priority"];
-export const RESULT_KEYS = ["id", "status"];
-export const RESULT_STATUSES = ["done", "failed"];
+export const QUEUE_KEYS = ["id", "title", "pool", "provider", "priority", "routes"];
+export const ROUTE_KEYS = ["pool", "provider"];
+export const MAX_ROUTES = 10;
+export const RESULT_KEYS = ["id", "status", "reason"];
+export const RESULT_STATUSES = ["done", "failed", "refused"];
+export const REASONS = ["stale-reading", "no-run-setup", "already-ran", "not-eligible", "unknown-route", "unknown-job", "other"];
 export const MAX_QUEUE = 50;
 export const PLAN_KEYS = ["pool", "plan_type", "provider", "left_pct", "left_usd", "resets_at", "window", "as_of", "how"];
 export const WINDOW_NAMES = ["5h", "week"];
@@ -112,6 +115,14 @@ export function validatePayload(p) {
       if (q.pool !== null && (typeof q.pool !== "string" || !POOL_REF.test(q.pool))) return `queue[${i}].pool must be pool-N or null`;
       if (q.provider !== null && !PROVIDERS.includes(q.provider)) return `queue[${i}].provider is not allowed`;
       if (q.priority !== null && !(Number.isInteger(q.priority) && q.priority >= 0 && q.priority <= 999)) return `queue[${i}].priority must be 0-999 or null`;
+      if (!Array.isArray(q.routes) || q.routes.length > MAX_ROUTES) return `queue[${i}].routes must be a list of at most ${MAX_ROUTES}`;
+      for (const rt of q.routes) {
+        if (!isObject(rt)) return `queue[${i}].routes must hold objects`;
+        const rk = sameKeys(rt, ROUTE_KEYS);
+        if (rk.extra.length || rk.missing.length) return `queue[${i}].routes: fields must be exactly ${ROUTE_KEYS.join(", ")}`;
+        if (typeof rt.pool !== "string" || !POOL_REF.test(rt.pool)) return `queue[${i}].routes pool must be pool-N`;
+        if (!PROVIDERS.includes(rt.provider)) return `queue[${i}].routes provider is not allowed`;
+      }
     }
   }
   if (p.results !== undefined) {
@@ -123,6 +134,7 @@ export function validatePayload(p) {
       if (k.extra.length || k.missing.length) return `results[${i}]: fields must be exactly ${RESULT_KEYS.join(", ")}`;
       if (typeof r.id !== "string" || !JOB_ID.test(r.id)) return `results[${i}].id must be a hashed id`;
       if (!RESULT_STATUSES.includes(r.status)) return `results[${i}].status is not allowed`;
+      if (r.reason !== null && !REASONS.includes(r.reason)) return `results[${i}].reason is not allowed`;
     }
   }
   return null;
