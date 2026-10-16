@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+### Live: each plan's % left read automatically
+- `allo-router live` now reads what each plan has left (about once a minute) from the same local files `allo-router sync` reads: the Claude Usage app / Claude Code caches and Codex `rate_limits`. It prints a per-plan line when anything changes and, with `--share-readings on`, sends the rows so the dashboard's % left and reset markers stay current. pools.json is never written, so a reviewed plan.json keeps matching; a newer hand-typed reading is kept.
+- Plans with no local limit source (Claude Personal today) keep their hand-typed reading, labelled manual, and the live line says so. Grok Bot shows "no plan limit (orchestrator)"; no % is invented.
 
 ### Hosted dashboard: Grok Bot pool + live running jobs
 - **Grok Bot** appears as an orchestrator plan (provider `grok`, plan type `orchestrator`): job count only, no invented %. Fed from real Chief `run.log` dispatch events.
