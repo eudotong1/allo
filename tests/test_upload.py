@@ -97,7 +97,7 @@ def show(here, now=NOW):
 def test_payload_holds_only_allowlisted_keys(tmp_path):
     write_folder(tmp_path)
     payload, _ = show(tmp_path)
-    assert set(payload) == set(up.TOP_KEYS) == {"schema", "sent_at", "jobs"}
+    assert set(payload) == set(up.TOP_KEYS) == {"schema", "sent_at", "jobs"}  # readings are off by default
     assert len(payload["jobs"]) == 5
     for j in payload["jobs"]:
         assert set(j) == set(up.JOB_KEYS)
@@ -213,6 +213,10 @@ def test_allowlist_matches_the_server(tmp_path):
     assert arr("MISSES") == list(up.MISSES)
     assert arr("PLAN_TYPES") == list(up.PLAN_TYPES)
     assert arr("PROVIDERS") == list(up.PROVIDERS)
+    assert arr("OPTIONAL_TOP_KEYS") == list(up.OPTIONAL_TOP_KEYS)
+    assert arr("PLAN_KEYS") == list(up.PLAN_KEYS)
+    assert arr("WINDOW_NAMES") == list(up.WINDOW_NAMES)
+    assert arr("HOWS") == list(up.HOWS)
     assert arr("MODELS") == list(up.MODELS)
     assert arr("EFFORTS") == list(up.EFFORTS)
     assert f"export const MAX_ROWS = {up.MAX_ROWS};" in js
@@ -448,3 +452,30 @@ def test_provider_personal_vs_team_and_title_model_effort(tmp_path):
     assert (a["provider"], a["title"], a["model"], a["effort"]) == ("claude_personal", "Industry pages", "opus", "high")
     assert (b["provider"], b["title"], b["effort"]) == ("claude_team", "Security audit", "very_high")
     assert (c["provider"], c["title"], c["model"]) == ("codex", "i18n", "gpt-5-codex")
+
+
+def test_plan_rows_label_auto_and_manual_and_drop_labels():
+    cfg = {"pools": [
+        {"id": "codex_main", "label": "ChatGPT (secret label)", "kind": "subscription", "remaining_pct": 61.5,
+         "resets_at": "2026-10-16T22:30:00Z", "updated_at": "2026-10-15T23:58:12Z", "source": "sync: codex",
+         "sync": {"source": "codex", "window": "week"}, "run": {"command": ["codex", "exec", "{prompt}"]}},
+        {"id": "grok", "kind": "subscription", "remaining_pct": 40, "updated_at": "2026-10-15T20:00:00Z", "source": "manual"},
+        {"id": "empty", "kind": "subscription"},
+    ]}
+    pools = {}
+    rows = up.plan_rows(cfg, pools)
+    assert [r["how"] for r in rows] == ["auto", "manual"]
+    assert rows[0]["left_pct"] == 61.5 and rows[0]["resets_at"] == "2026-10-16T22:30Z" and rows[0]["window"] == "week"
+    assert rows[1]["resets_at"] is None and rows[1]["window"] is None
+    assert "secret" not in json.dumps(rows) and "codex_main" not in json.dumps(rows)
+    payload = {"schema": up.SCHEMA, "sent_at": "2026-10-15T23:59Z", "jobs": [], "plans": rows}
+    up.check_payload(payload)
+
+
+def test_readings_go_up_only_when_shared(tmp_path):
+    cfg = {"pools": [{"id": "codex_main", "kind": "subscription", "remaining_pct": 50, "resets_at": "2026-10-16T22:30:00Z",
+                      "updated_at": "2026-10-15T23:58:00Z", "source": "sync: codex", "sync": {"source": "codex"}}]}
+    now = up.datetime(2026, 10, 16, tzinfo=up.timezone.utc)
+    assert "plans" not in up.build_payload([], cfg, "s" * 64, {}, now)
+    shared = up.build_payload([], cfg, "s" * 64, {}, now, share_readings=True)
+    assert shared["plans"][0]["how"] == "auto" and shared["plans"][0]["window"] == "week"

@@ -351,8 +351,8 @@ def cmd_set(here, args):
         p["remaining_usd"] = nums["usd"]
     if "reset" in kv:
         p["resets_at"] = kv["reset"]
-    if "note" in kv:
-        p["source"] = kv["note"]
+    # A typed-in reading is manual, even on a pool that sync filled before; the dashboard labels it that way.
+    p["source"] = "manual" + (": " + kv["note"] if "note" in kv else "")
     p["updated_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     (here / "pools.json").write_text(json.dumps(cfg, indent=2))
     print("updated", pid, "at", p["updated_at"])
