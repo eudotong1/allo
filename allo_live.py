@@ -13,6 +13,11 @@ while the launchd job is alive, then marked ok/failed on "end <lane>".
   allo-router live                  one shot: upload current running + new log events
   allo-router live --watch          poll every few seconds until Ctrl-C
   allo-router live --watch --every 3
+
+Each poll (at most once a minute) it also reads what each plan has left from the same local files
+`allo-router sync` reads (Claude usage caches, Codex rate_limits), prints it when it changes, and, with readings
+sharing on (`allo-router connect --share-readings on`), sends it so the dashboard's % left and reset markers stay
+current. It never writes pools.json, so a reviewed plan.json keeps matching.
 """
 from __future__ import annotations
 
@@ -529,9 +534,65 @@ def run_request(folder, task_id, req_id, pool, now=None, transport=up.http, out=
     return result
 
 
-def send(jobs, state, now, transport=up.http, queue=None):
+# ---------- Plan readings: what each plan has left, read automatically ----------
+PLAN_READ_S = 60  # re-read the local usage files at most this often
+PLAN_NAMES = {"claude_personal": "Claude Personal", "claude_team": "Claude Team", "codex": "ChatGPT", "grok": "Grok Bot"}
+
+
+def plan_line(p, status):
+    """One line for one plan: what is left, when it resets, and where that came from."""
+    name = f"{p.get('id')} ({PLAN_NAMES.get(up.provider(p, p.get('kind')), 'other')})"
+    if p.get("kind") == "orchestrator":
+        return f"{name}: no plan limit (orchestrator)"
+    pct, usd = p.get("remaining_pct"), p.get("remaining_usd")
+    left = f"{pct:g}% left" if isinstance(pct, (int, float)) else (f"${usd:,.2f} left" if isinstance(usd, (int, float)) else "no reading")
+    src = str(p.get("source") or "")
+    how = "auto" if src.startswith("sync:") else (f"manual, as of {p['updated_at']}" if p.get("updated_at") else None)
+    bits = [b for b in (f"resets {p['resets_at']}" if p.get("resets_at") else None, how) if b]
+    if status and status != "FULL":
+        bits.append(f"no limit in local files ({status})")
+    return f"{name}: {left}" + (f" ({'; '.join(bits)})" if bits else "")
+
+
+def read_plans(state, router_dirs, now):
+    """(plan rows for the upload, one line per plan). Each pool with a sync block is read from local files into a
+    copy of its folder's pools.json, as `allo-router sync` would (a newer hand-typed reading is kept); the file is
+    never written. A pool id seen in an earlier folder is not read again."""
+    import allo_sync
+    rows, lines, seen = [], [], set()
+    numbering = state.setdefault("pools", {})
+    for here in router_dirs:
+        try:
+            cfg = json.loads((Path(here) / "pools.json").read_text())
+        except (OSError, ValueError):
+            continue
+        fresh = []
+        for p in cfg.get("pools", []):
+            if not isinstance(p, dict) or p.get("id") is None or p["id"] in seen:
+                continue
+            seen.add(p["id"])
+            status = None
+            if isinstance(p.get("sync"), dict):
+                try:
+                    r = allo_sync.read_pool(p, now, tokens=False)
+                    allo_sync.apply(p, r)
+                    status = r["status"]
+                except (SystemExit, Exception):  # a bad sync block or an unreadable source is a status, not a crash
+                    status = "UNAVAILABLE"
+            fresh.append(p)
+            lines.append(plan_line(p, status))
+        rows += up.plan_rows({"pools": fresh}, numbering)
+    return rows[:50], lines
+
+
+def plans_changed(plans, state):
+    fp = hashlib.sha256(json.dumps(plans, sort_keys=True).encode()).hexdigest()[:16]
+    return fp != (state.get("live") or {}).get("plans_fp"), fp
+
+
+def send(jobs, state, now, transport=up.http, queue=None, plans=None):
     jobs = unsent(jobs, state)
-    if not jobs and queue is None:
+    if not jobs and queue is None and not plans:
         return 0
     # Cap to MAX_ROWS: prefer running, then newest
     jobs = sorted(jobs, key=lambda j: (0 if j["status"] == "running" else 1, j["at"]), reverse=True)
@@ -539,6 +600,8 @@ def send(jobs, state, now, transport=up.http, queue=None):
     payload = {"schema": up.SCHEMA, "sent_at": utc_minute(now), "jobs": jobs}
     if queue is not None:
         payload["queue"] = queue
+    if plans:
+        payload["plans"] = plans
     up.check_payload(payload)
     status, body = transport("POST", state["server"].rstrip("/") + "/v1/jobs", payload, state["token"])
     up.log_upload(payload, status)
@@ -575,6 +638,7 @@ def cmd_live(argv, now=None, transport=up.http, out=print, spawn=None):
         out("Not connected. Run allo-router connect first.")
         return 1
     dirs = [Path(d) for d in a.dir] or default_router_dirs()
+    read = {"at": None, "lines": None}
 
     def once():
         n = datetime.now(timezone.utc) if now is None else now
@@ -583,15 +647,30 @@ def cmd_live(argv, now=None, transport=up.http, out=print, spawn=None):
         running = sum(1 for j in jobs if j["status"] == "running")
         queue, where = build_queue(state, dirs, n)
         changed, fp = queue_changed(queue, state)
+        plans, pfp = None, None
+        if read["at"] is None or time.monotonic() - read["at"] >= PLAN_READ_S:
+            read["at"] = time.monotonic()
+            rows, lines = read_plans(state, dirs, n)
+            if lines != read["lines"]:
+                read["lines"] = lines
+                note = "" if state.get("share_readings") else " (not sent: turn on with allo-router connect --share-readings on)"
+                out("live: plans left" + note + "".join(f"\n  {ln}" for ln in lines))
+            if state.get("share_readings") and rows:
+                pchanged, pfp = plans_changed(rows, state)
+                plans = rows if pchanged else None
         try:
-            sent = send(jobs, state, n, transport, queue=queue if changed else None)
+            sent = send(jobs, state, n, transport, queue=queue if changed else None, plans=plans)
         except Exception:
             state["live"] = before  # not sent: keep the cursor so these events go up on the next poll
             raise
-        if changed:
-            state.setdefault("live", {})["queue_fp"] = fp
+        if changed or plans:
+            if changed:
+                state.setdefault("live", {})["queue_fp"] = fp
+            if plans:
+                state.setdefault("live", {})["plans_fp"] = pfp
             up.save_state(state)
-        out(f"live: uploaded {sent} row(s) ({running} running) to {state['server']}")
+        out(f"live: uploaded {sent} row(s) ({running} running"
+            f"{f', {len(plans)} plan reading(s)' if plans else ''}) to {state['server']}")
         # Dashboard clicks: one process per requested job; ids this computer doesn't know are reported failed.
         # Dashboard clicks: one process per requested job, on the route that was picked. The route must be one of
         # this job's own plans here; anything else is refused and never run.

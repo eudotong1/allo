@@ -1,5 +1,8 @@
 // The dashboard: what the router did across your computers. Polls every 15 s while the tab is visible, with
 // If-None-Match, so an unchanged page costs one tiny read.
+// Layout (direction D): numbered sections. 01 Now (running, countdown to the next plan reset, needs you),
+// 02 Suggested next, 03 Plans (ledger, with the route diagram as a fold-out), 04 Jobs, 05 the period's totals,
+// 06 Computers, 07 what this page gets.
 import { api, DAYS, esc, hhmm, mdy, parseMinute, post, signInUrl, signOut } from "/common.js";
 
 const POLL_MS = 60000; // D1 free tier: keep idle tabs cheap
@@ -9,6 +12,9 @@ const COLORS = {
   claude: "var(--claude)", claude_personal: "var(--claude)", claude_team: "#C4A35A",
   grok: "#1C1C1C", api: "var(--credit)", gemini: "var(--gemini)", other: "var(--other)",
 };
+// Plan colours too light to read as text on the paper get a darker twin for words.
+const TEXT_COLOR = { "var(--claude)": "var(--claude-text)", "#C4A35A": "#7A6020" };
+const textColor = (c) => TEXT_COLOR[c] || c;
 const EXTRA = ["#0F7C8C", "#6A4C93", "#B5651D", "#2E7D32", "#8C2F39"];
 const PROVIDER = {
   claude: "Claude", claude_personal: "Claude Personal", claude_team: "Claude Team",
@@ -30,6 +36,8 @@ const WHY = {
   "missing-cwd": "Its working folder is missing", other: "Skipped for another reason",
 };
 const RANGES = [["week", "This week"], ["last", "Last week"], ["30d", "30 days"]];
+const PERIOD = { week: "this week", last: "last week", "30d": "in the last 30 days" };
+const WORDS = ["", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine"];
 
 const range = new URLSearchParams(location.search).get("range") || "week";
 let etag = null;
@@ -38,6 +46,17 @@ let checkedAt = null;
 
 const money = (x) => (x < 0 ? "-$" : "$") + Math.abs(x).toFixed(2);
 const plural = (n, one, many = one + "s") => `${n} ${n === 1 ? one : many}`;
+const pad = (n) => String(n).padStart(2, "0");
+// "4:48": hours and minutes to go, for the countdown
+const hm = (ms) => { const m = Math.max(0, Math.floor(ms / 60000)); return `${Math.floor(m / 60)}:${pad(m % 60)}`; };
+// "in 28 h", "in 3 d 13 h", "in 16 d"
+function inSpan(ms) {
+  const h = ms / 3600000;
+  if (h < 1) return `in ${Math.max(1, Math.round(h * 60))} min`;
+  if (h < 48) return `in ${Math.round(h)} h`;
+  const H = Math.round(h), d = Math.floor(H / 24), r = H % 24;
+  return h < 168 && r ? `in ${d} d ${r} h` : `in ${d} d`;
+}
 
 
 // ---------- plan limits: reset times and what is left ----------
@@ -101,7 +120,7 @@ function styleLines(lines) {
   let extra = 0;
   return lines.map((l) => {
     if (!l.pool) return { ...l, color: "var(--none)", name: "No plan took it", short: "no plan" };
-    if (l.direct) return { ...l, color: COLORS.grok, name: "Grok Bot \u00b7 direct (not routed)", short: "Grok Bot, direct (not routed)" };
+    if (l.direct) return { ...l, color: COLORS.grok, name: "Grok Bot · direct (not routed)", short: "Grok Bot, direct (not routed)" };
     const p = l.provider || "other";
     const colorKey = p === "codex" ? "chatgpt" : p;
     const color = used[colorKey] ? EXTRA[extra++ % EXTRA.length] : COLORS[colorKey] || COLORS.other;
@@ -149,7 +168,7 @@ function fmtElapsed(sec) {
 
 // Where a job ran, with the hand-off when Grok Bot sent it: "Grok Bot → ChatGPT".
 function via(j, l) {
-  return j.dispatched_by && PROVIDER[j.dispatched_by] && !l.direct ? `${PROVIDER[j.dispatched_by]} \u2192 ${l.short}` : l.short;
+  return j.dispatched_by && PROVIDER[j.dispatched_by] && !l.direct ? `${PROVIDER[j.dispatched_by]} → ${l.short}` : l.short;
 }
 
 function agoText(minute, now) {
@@ -157,40 +176,106 @@ function agoText(minute, now) {
   return m < 1 ? "just now" : `${m} min ago`;
 }
 
-// Running now, plus what finished in the last 30 minutes, so short jobs never flash by unseen.
-function runningStrip(d, lines) {
-  const live = d.running || [];
-  const recent = d.recent || [];
-  if (!live.length && !recent.length) return "";
-  const now = new Date();
-  const lineOf = Object.fromEntries(lines.map((l) => [l.key, l]));
-  const blank = { color: "var(--ink)", short: "plan", name: "plan" };
-  const items = live.map((j) => {
-    const l = lineOf[j.line] || blank;
-    return `<li style="--c:${l.color}"><span class="pulse" aria-hidden="true"></span>` +
-      `<b>${esc(j.title || `#${j.n}`)}</b><span class="on">${esc(via(j, l))}</span>` +
-      `<span class="clock" data-started="${esc(j.started_at || j.at)}">${fmtElapsed(j.seconds)}</span></li>`;
-  }).join("");
-  const done = recent.map((j) => {
-    const l = lineOf[j.line] || blank;
-    const bad = j.status !== "ok";
-    return `<li class="done" style="--c:${l.color}"><span class="dot" aria-hidden="true"></span>` +
-      `<b>${esc(j.title || "Untitled run")}</b><span class="on">${esc(via(j, l))}</span>` +
-      `<span class="clock${bad ? " bad" : ""}">${bad ? esc(j.status) + " \u00b7 " : ""}${esc(agoText(j.ended_at, now))}</span></li>`;
-  }).join("");
-  const head = live.length
-    ? (live.length === 1 ? "One job is in flight." : live.length + " jobs are in flight.") + " Updates every 15 seconds."
-    : "Nothing is running right now.";
-  return `<section class="running" aria-live="polite"><div class="running-head"><h2 class="cond">${live.length ? "Running now" : "Live"}</h2>` +
-    `<p class="intro">${head}</p></div>` +
-    (items ? `<ul class="running-list">${items}</ul>` : "") +
-    (done ? `<h3 class="running-sub">Finished in the last 30 min</h3><ul class="running-list recent">${done}</ul>` : "") +
-    `</section>`;
+function sec(n, title, body, sub = "", id = "") {
+  return `<section class="sec"${id ? ` id="${id}"` : ""}><h2><span>${n}</span>${title}${sub ? `<em class="since">${sub}</em>` : ""}</h2><div>${body}</div></section>`;
 }
 
-// Suggested next: the planner's runnable jobs on each computer (titles and plans only). Each job has one chip per
-// plan that may take it; the planner's pick is highlighted. A click asks that computer, through the same request
-// path, to run that one job on that plan. Nothing runs by itself.
+// ---------- 01 Now ----------
+// First column: running now, plus what finished in the last 30 minutes, so short jobs never flash by unseen.
+function nowRunning(d, lines, now) {
+  const live = d.running || [];
+  const recent = d.recent || [];
+  const lineOf = Object.fromEntries(lines.map((l) => [l.key, l]));
+  const blank = { color: "var(--ink)", short: "plan", name: "plan" };
+  let out;
+  if (live.length) {
+    const j = live[0], l = lineOf[j.line] || blank;
+    const meta = [j.computer && d.computers.length > 1 ? j.computer : "", modelName(j.model), j.effort ? `effort ${j.effort.replace("_", " ")}` : ""].filter(Boolean).join(" · ");
+    out = `<p class="label" aria-live="polite">Running for <span class="clock" data-started="${esc(j.started_at || j.at)}">${fmtElapsed(j.seconds)}</span> · updates every 15 seconds</p>
+      <h1><b>${esc(j.title || `#${j.n}`)}</b> on <b style="color:${textColor(l.color)}">${esc(via(j, l))}</b></h1>
+      ${meta ? `<p class="dim">${esc(meta)}</p>` : ""}`;
+    if (live.length > 1) {
+      out += `<ul class="also"><li class="h">Also running</li>` + live.slice(1).map((r) => {
+        const rl = lineOf[r.line] || blank;
+        return `<li><span class="pulse" style="--c:${rl.color}" aria-hidden="true"></span><b>${esc(r.title || `#${r.n}`)}</b> <span class="dim">${esc(via(r, rl))}</span><span class="clock" data-started="${esc(r.started_at || r.at)}">${fmtElapsed(r.seconds)}</span></li>`;
+      }).join("") + `</ul>`;
+    }
+  } else {
+    const t = d.totals;
+    const plans = d.lines.filter((l) => l.pool).length;
+    out = `<p class="label">Nothing running right now</p>
+      <h1><b>${plural(t.jobs, "task")}</b> allocated across ${plural(plans, "plan")} ${PERIOD[d.range.key]}.</h1>
+      <p class="dim"><b>Allo</b>cate usage across your plans based on how much of each limit remains. Each job goes to the plan with the most of its limit left that may take it.</p>`;
+  }
+  if (recent.length) {
+    out += `<ul class="also"><li class="h">Finished in the last 30 min</li>` + recent.map((j) => {
+      const l = lineOf[j.line] || blank, bad = j.status !== "ok";
+      return `<li><span class="dot" style="--c:${l.color}" aria-hidden="true"></span><b>${esc(j.title || "Untitled run")}</b> <span class="dim">${esc(via(j, l))}</span>` +
+        `<span class="when${bad ? " bad" : ""}">${bad ? esc(j.status) + " · " : ""}${esc(agoText(j.ended_at, now))}</span></li>`;
+    }).join("") + `</ul>`;
+  }
+  return out;
+}
+
+function check(ok, text) { return `<li class="${ok ? "" : "no"}"><span>${text}</span></li>`; }
+const planLines = (lines) => lines.filter((l) => l.pool && !l.direct);
+const lastUpload = (d) => d.computers.filter((c) => c.last_upload_at).sort((a, b) => b.last_upload_at.localeCompare(a.last_upload_at))[0];
+
+// Second column: countdown to the soonest plan reset, and whether the readings behind the plan are usable.
+function nowNext(d, lines, now) {
+  const plans = planLines(lines);
+  const soon = plans.map((l) => ({ l, at: nextReset(l.limit, now) })).filter((x) => x.at).sort((a, b) => a.at - b.at)[0];
+  let out;
+  if (soon) {
+    const lt = leftText(soon.l.limit);
+    const said = staleReading(soon.l.limit, now) ? `${esc(soon.l.short)}’s last reading (${esc(lt || "no % left")}) is from before its last reset.`
+      : lt ? `${esc(soon.l.short)} has ${esc(lt)} until then.` : `${esc(soon.l.short)} resets then.`;
+    out = `<p class="label">Next plan reset · ${esc(soon.l.short)} · ${esc(localWhen(soon.at))}</p>
+      <p class="count">${hm(soon.at - now)}<small>h:min to go</small></p>
+      <p>${said} The suggested plan for each job goes to whichever plan has the most of its limit left.</p>`;
+  } else {
+    out = `<p class="label">Next plan reset</p><p class="count">--:--</p>
+      <p>% left not shared yet. Turn on with <code>allo-router connect --share-readings on</code>.</p>`;
+  }
+  const checks = [];
+  if (plans.length) {
+    const read = plans.filter((l) => leftText(l.limit)).length;
+    checks.push(check(read === plans.length, `${read} of ${plans.length} plans share a reading`));
+    const stale = plans.filter((l) => staleReading(l.limit, now)).length;
+    if (read) checks.push(check(!stale, stale ? `${plural(stale, "reading")} older than the last reset` : "Every reading is newer than its plan’s last reset"));
+  }
+  const up = lastUpload(d);
+  checks.push(up ? check(true, `Last upload ${hhmm(new Date(up.last_upload_at))} UTC from ${esc(up.name)}${mdy(new Date(up.last_upload_at)) === mdy(now) ? "" : `, ${mdy(new Date(up.last_upload_at))}`}`) : check(false, "No upload yet"));
+  return out + `<ul class="checks" aria-label="Checks">${checks.join("")}</ul>`;
+}
+
+// Third column: what needs a person, each with what to do about it.
+function nowNeeds(d, lines, now) {
+  const items = [];
+  for (const j of d.queue || []) {
+    const r = (j.routes || []).find((x) => x.pool === j.route);
+    if (j.request === "refused") items.push([`${esc(j.title || "A job")} was refused on ${esc(r ? routeName(r) : "that plan")}.`, `${esc(cap(REASON[j.reason] || REASON.other))}. Pick another plan under Suggested next.`]);
+    else if (j.request === "failed") items.push([`${esc(j.title || "A job")} failed on ${esc(r ? routeName(r) : "that plan")}.`, `See it on ${esc(j.computer || "your computer")} in <code>allo-router dashboard</code>.`]);
+  }
+  if (d.totals.missed) items.push([`${plural(d.totals.missed, "task")} missed ${PERIOD[d.range.key]}.`, `No plan had room, or the plan could not run it. <a href="#misses">See the misses</a>.`]);
+  const plans = planLines(lines);
+  for (const l of plans.filter((x) => staleReading(x.limit, now))) {
+    items.push([`${esc(l.name)}’s reading is older than its last reset.`, `Re-read it on ${esc(l.computer || "that computer")}: <code>allo-router sync</code>, or <code>set</code> for a plan read by hand.`]);
+  }
+  const unshared = plans.filter((l) => !leftText(l.limit) && !nextReset(l.limit, now));
+  if (unshared.length) items.push([`% left not shared for ${esc(unshared.map((l) => l.name).join(", "))}.`, `Turn on with <code>allo-router connect --share-readings on</code>.`]);
+  for (const c of d.computers.filter((x) => !x.last_upload_at)) items.push([`${esc(c.name)} has not uploaded yet.`, `Run <code>allo-router live</code> or a job there.`]);
+  let out = `<p class="label">Needs you</p>`;
+  if (!items.length) return out + `<h3 class="ok">Nothing.</h3><p class="dim">No refusals, misses or stale readings ${PERIOD[d.range.key]}.</p>`;
+  items.forEach(([h, p], i) => { out += `<h3${i ? ' class="more"' : ""}>${h}</h3><p>${p}</p>`; });
+  return out;
+}
+const cap = (t) => (t ? t[0].toUpperCase() + t.slice(1) : t);
+
+// ---------- 02 Suggested next ----------
+// The planner's runnable jobs on each computer (titles and plans only). Each job has one chip per plan that may
+// take it; the planner's pick is highlighted. A click asks that computer, through the same request path, to run that
+// one job on that plan. Nothing runs by itself.
 const sending = new Set();
 const REASON = {
   "stale-reading": "needs a fresh reading", "no-run-setup": "that plan has no run setup", "already-ran": "it already ran",
@@ -202,9 +287,9 @@ const routeName = (r) => planLabel(r.provider || "other", r.pool, null);
 
 function queueSection(d) {
   const q = d.queue || [];
-  const head = `<div class="running-head"><h2 class="cond">Suggested next</h2><p class="intro">What allo-router would run next. Pick a plan to send the job to Grok Bot; the highlighted one is allo-router\u2019s pick. Your computer picks it up within about 20 seconds and runs it there.</p></div>`;
+  const head = `<p class="intro">What allo-router would run next. Pick a plan to send the job to Grok Bot; the highlighted one is allo-router’s pick. Your computer picks it up within about 20 seconds and runs it there.</p>`;
   if (!q.length) {
-    return `<section class="queue">${head}<p class="queue-empty">Nothing queued. When <code>tasks.json</code> on a connected computer has jobs that haven\u2019t run yet, they show up here.</p></section>`;
+    return `<div class="queue">${head}<p class="queue-empty">Nothing queued. When <code>tasks.json</code> on a connected computer has jobs that haven’t run yet, they show up here.</p></div>`;
   }
   const items = q.map((j) => {
     const key = `${j.install_id}|${j.id}`;
@@ -213,8 +298,8 @@ function queueSection(d) {
     const chosen = routes.find((r) => r.pool === j.route);
     const busy = sending.has(key) || j.request === "pending" || j.request === "taken";
     let state = "";
-    if (sending.has(key)) state = `<span class="qs">Sending\u2026</span>`;
-    else if (j.request === "pending") state = `<span class="qs wait">Waiting for ${esc(where)} \u00b7 ${esc(chosen ? routeName(chosen) : "")}</span>`;
+    if (sending.has(key)) state = `<span class="qs">Sending…</span>`;
+    else if (j.request === "pending") state = `<span class="qs wait">Waiting for ${esc(where)} · ${esc(chosen ? routeName(chosen) : "")}</span>`;
     else if (j.request === "taken") state = `<span class="qs run"><span class="pulse" aria-hidden="true"></span>Running on ${esc(chosen ? routeName(chosen) : where)}</span>`;
     else if (j.request === "refused") state = `<span class="qs bad">Refused on ${esc(chosen ? routeName(chosen) : "that plan")}: ${esc(REASON[j.reason] || REASON.other)}</span>`;
     else if (j.request === "failed") state = `<span class="qs bad">Last run on ${esc(chosen ? routeName(chosen) : "that plan")} failed</span>`;
@@ -222,13 +307,13 @@ function queueSection(d) {
     const chips = busy ? "" : `<span class="routes" role="group" aria-label="Send ${esc(j.title || "job")} to">` + routes.map((r) => {
       const sug = r.pool === j.pool;
       return `<button type="button" class="route${sug ? " sug" : ""}" style="--c:${routeColor(r.provider)}" data-send="${esc(key)}" data-route="${esc(r.pool)}"` +
-        ` title="Run on ${esc(routeName(r))}${sug ? " (allo-router\u2019s pick)" : ""}"><span class="dot" aria-hidden="true"></span>${esc(routeName(r))}${sug ? `<span class="pick">pick</span>` : ""}</button>`;
+        ` title="Run on ${esc(routeName(r))}${sug ? " (allo-router’s pick)" : ""}"><span class="dot" aria-hidden="true"></span>${esc(routeName(r))}${sug ? `<span class="pick">pick</span>` : ""}</button>`;
     }).join("") + `</span>`;
     return `<li><span class="qt"><b>${esc(j.title || "Untitled job")}</b>` +
-      `<span class="on">${d.computers.length > 1 ? `${esc(where)} \u00b7 ` : ""}${j.priority != null ? `priority ${j.priority}` : ""}</span>${state}</span>` +
+      `<span class="on">${d.computers.length > 1 ? `${esc(where)} · ` : ""}${j.priority != null ? `priority ${j.priority}` : ""}</span>${state}</span>` +
       chips + `</li>`;
   }).join("");
-  return `<section class="queue">${head}<ul class="queue-list">${items}</ul></section>`;
+  return `<div class="queue">${head}<ul class="queue-list">${items}</ul></div>`;
 }
 
 function wireQueue() {
@@ -260,107 +345,58 @@ function sentText(l) {
 }
 
 
-function nav(d) {
-  const periods = RANGES.map(([k, label]) => `<a href="/?range=${k}" class="${k === d.range.key ? "on" : ""}">${label}</a>`).join("");
+// ---------- masthead ----------
+function mast(d) {
+  const periods = RANGES.map(([k, label]) => `<a href="/?range=${k}" class="${k === d.range.key ? "on" : ""}"${k === d.range.key ? ' aria-current="page"' : ""}>${label}</a>`).join("");
   const live = checkedAt
     ? `Live, checked ${hhmm(checkedAt)}:${String(checkedAt.getUTCSeconds()).padStart(2, "0")} UTC`
     : "";
-  return `<div class="band"><div class="wrap"><nav>
+  return `<header class="mast">
     <a class="mark" href="/">Allo Router</a>
-    <span class="periods">${periods}</span>
-    <span class="who"><span class="live" id="live">${live}</span><span>GitHub: <b>${esc(d.login)}</b></span><button class="link" id="signout">Sign out</button></span>
-  </nav></div></div>`;
-}
-
-
-function header(d, now) {
-  const t = d.totals;
-  const plans = d.lines.filter((l) => l.pool).length;
-  const start = new Date(d.range.start);
-  const scope = {
-    week: `Week of ${mdy(start)}, Monday to now`,
-    last: `Week of ${mdy(start)}, Monday to Sunday`,
-    "30d": `The 30 days to ${mdy(now)}`,
-  }[d.range.key];
-  const whenSaved = { week: "this week", last: "last week", "30d": "in the last 30 days" }[d.range.key];
-  const comps = d.computers.filter((c) => c.last_upload_at).sort((a, b) => b.last_upload_at.localeCompare(a.last_upload_at));
-  const uploads = comps.length
-    ? (() => {
-        const lastC = comps[0], last = new Date(lastC.last_upload_at);
-        const day = mdy(last) === mdy(now) ? "today" : mdy(last);
-        let out = `Last upload ${hhmm(last)} from ${esc(lastC.name)}, ${day} UTC.`;
-        if (comps.length > 1) { const a = new Date(comps[1].last_upload_at); out += ` ${esc(comps[1].name)} last uploaded at ${hhmm(a)}.`; }
-        return out;
-      })()
-    : "No upload yet.";
-  let aside;
-  if (t.priced) {
-    aside = `<div class="big cond">${money(t.saved)}</div>
-      <p><b>API value (est.) ${whenSaved}.</b> What the work would have cost at public API list prices, from real reported token usage or cost. ${t.priced} of ${t.runs ?? t.jobs} runs had usage; the rest show n/a.</p>
-      <p class="m">${uploads}</p>`;
-  } else {
-    const big = comps.length ? hhmm(new Date(comps[0].last_upload_at)) : "--:--";
-    aside = `<div class="big cond">${big}</div>
-      <p><b>${comps.length ? `Last upload from ${esc(comps[0].name)}.` : "No upload yet."}</b></p>
-      <p class="m">API value n/a: no run reported real token usage or cost yet.</p>`;
-  }
-  return `<header class="head">
-    <div>
-      <p class="scope">${scope}, from ${plural(d.computers.length, "computer")}</p>
-      <h1 class="cond">${plural(t.jobs, "task")} allocated<br>across ${plural(plans, "plan")}</h1>
-      <p class="sub"><b>Allo</b>cate usage across your plans based on how much of each limit remains.</p>
-      <div class="stats">
-        <div><b class="cond">${t.jobs}</b>tasks</div><div><b class="cond">${t.runs ?? t.jobs}</b>runs</div>
-        <div><b class="cond">${t.ran}</b>ran</div>
-        <div class="${t.missed ? "miss" : ""}"><b class="cond">${t.missed}</b>missed</div>
-      </div>
-    </div>
-    <aside class="side">${aside}</aside>
+    <nav class="periods" aria-label="Period">${periods}</nav>
+    <span class="right"><span class="live" id="live">${live}</span><span class="who">GitHub: <b>${esc(d.login)}</b></span><button class="link" id="signout">Sign out</button></span>
   </header>`;
 }
 
-function limitBlock(l) {
-  if (!l.pool) return "";
-  const now = new Date();
-  const lim = l.limit;
-  const nr = nextReset(lim, now);
-  const left = leftText(lim);
-  if (!lim || (!left && !nr)) {
-    if (l.direct) return `<span class="lim lim-none">Grok Bot's own usage isn't tracked yet, so no % left.</span>`;
-    return `<span class="lim lim-none">% left not shared yet. Turn on with <code>allo-router connect --share-readings on</code>.</span>`;
-  }
-  const stale = staleReading(lim, now);
-  const pct = typeof lim.left_pct === "number" ? Math.max(0, Math.min(100, lim.left_pct)) : null;
-  const tag = lim.how === "auto" ? `<span class="tag auto">Auto</span>` : (lim.how === "manual" ? `<span class="tag manual">Manual</span>` : "");
-  return `<span class="lim">
-    ${pct !== null ? `<span class="lim-bar${stale ? " stale" : ""}"><span style="width:${pct}%;background:${l.color}"></span></span>` : ""}
-    <span class="lim-row">${left ? `<b>${esc(left)}</b>` : ""}${left && nr ? " · " : ""}${nr ? `resets ${esc(localWhen(nr))}` : ""}</span>
-    <span class="lim-src">${tag}${esc(sourceText(lim))}${stale ? ` <em>Older than the last reset; re-read it.</em>` : ""}</span>
-  </span>`;
+// ---------- 03 Plans: the ledger ----------
+function ledger(d, lines, now) {
+  const rows = lines.filter((l) => l.pool);
+  if (!rows.length) return `<p class="empty">No plans in this period yet.</p>`;
+  const total = d.totals.jobs || 1;
+  const body = rows.map((l) => {
+    const lim = l.limit, nr = nextReset(lim, now), stale = staleReading(lim, now);
+    const pct = lim && typeof lim.left_pct === "number" ? Math.max(0, Math.min(100, lim.left_pct)) : null;
+    const usd = lim && typeof lim.left_usd === "number" ? lim.left_usd : null;
+    const dim = stale || (pct === null && usd === null);
+    const left = pct !== null ? `${Math.round(lim.left_pct)}<small>%</small>` : usd !== null ? esc(money(usd)) : l.direct ? `<span class="na">n/a</span>` : "?";
+    let bar, note;
+    if (pct !== null) {
+      bar = `<div class="bar${stale ? " stale" : ""}"><i style="width:${pct}%;background:${l.color}"></i></div>`;
+    } else if (usd !== null) {
+      bar = `<div class="bar line" style="background:${l.color}"></div>`;
+    } else {
+      bar = `<div class="bar none"></div>`;
+    }
+    if (l.direct) note = `<div class="bar-note">Grok Bot's own usage isn't tracked yet, so no % left.</div>`;
+    else if (!lim || (!leftText(lim) && !nr)) note = `<div class="bar-note">% left not shared yet. Turn on with <code>allo-router connect --share-readings on</code>.</div>`;
+    else {
+      const tag = lim.how === "auto" ? `<span class="tag auto">Auto</span>` : (lim.how === "manual" ? `<span class="tag manual">Manual</span>` : "");
+      note = `<div class="bar-note">${tag}${esc(sourceText(lim))}${usd !== null && pct === null ? ". Dollars with no weekly cap, so no bar" : ""}${stale ? ` <em>Older than the last reset; re-read it.</em>` : ""}</div>`;
+    }
+    const resets = nr ? `<b>${esc(localWhen(nr))}</b><span class="dim">${inSpan(nr - now)}</span>` : `<span class="dim">no reset time</span>`;
+    const share = l.share ?? Math.round((l.jobs / total) * 100);
+    const value = l.direct ? (sentText(l) || "dispatcher, no API value") : l.priced ? `${money(l.saved)} API value` : (l.jobs ? "API value n/a" : "");
+    const jobs = `<b>${plural(l.jobs, l.direct ? "own task" : "task")}</b> · ${share}%${l.runs > l.jobs ? `<span class="dim"> · ${plural(l.runs, "run")}</span>` : ""}${value ? `<span class="sub">${esc(value)}</span>` : ""}`;
+    return `<tr><td class="plan${dim ? " dim" : ""}"><span class="key" style="background:${l.color}"></span>${esc(l.short)}${l.computer ? `<span class="sub">${esc(l.computer)}</span>` : ""}</td>
+      <td class="left fig${dim ? " dim" : ""}">${left}</td><td class="runway">${bar}${note}</td>
+      <td class="resets">${resets}</td><td class="jobs-on">${jobs}</td></tr>`;
+  }).join("");
+  return `<table class="ledger"><thead><tr><th scope="col">Plan</th><th scope="col" class="r">Left</th><th scope="col">Runway to reset</th><th scope="col">Resets</th><th scope="col">Jobs ${PERIOD[d.range.key]}</th></tr></thead><tbody>${body}</tbody></table>`;
 }
 
-// The allocation strip: a stacked bar of each plan's share of jobs, with per-plan totals. Real data only.
-function allocation(d, lines) {
-  const total = d.totals.jobs || 1;
-  const bar = lines.map((l) => {
-    const pct = l.share ?? (l.jobs / total) * 100;
-    return `<span class="${l.pool ? "" : "alloc-none"}" style="width:${pct.toFixed(2)}%;background:${l.color}" title="${esc(l.name)}: ${l.jobs} of ${d.totals.jobs}"></span>`;
-  }).join("");
-  const keys = lines.map((l) => {
-    const pct = l.share ?? Math.round((l.jobs / total) * 100);
-    const meta = l.direct
-      ? `${plural(l.jobs, "own job")} \u00b7 ${pct}%` + (sentText(l) ? ` \u00b7 ${sentText(l)}` : "")
-      : l.pool
-      ? `${plural(l.jobs, "job")} \u00b7 ${pct}%` + (l.priced ? ` \u00b7 ${money(l.saved)} API value` : (l.jobs ? " \u00b7 API value n/a (no cost reported)" : ""))
-      : `${plural(l.jobs, "job")} \u00b7 ${pct}% \u00b7 missed, no plan fit`;
-    return `<div><span class="sw" style="background:${l.color}"></span><b${l.pool ? "" : ' class="no"'}>${esc(l.name)}</b><span class="meta">${meta}</span>${limitBlock(l)}</div>`;
-  }).join("");
-  return `<section class="alloc">
-    <div class="alloc-head"><h2 class="cond">Allocation</h2><p class="intro">Share of the jobs each plan took. Each job goes to the plan with the most of its limit left that may take it.</p></div>
-    <div class="bar">${bar}</div>
-    <div class="alloc-keys">${keys}</div>
-  </section>`;
-}
+// ---------- 03 Plans, fold-out: the route diagram ----------
+let diagramOpen = false;
+try { diagramOpen = localStorage.getItem("allo.diagram") === "open"; } catch {}
 
 function ticks(d, X0, X1) {
   const start = new Date(d.range.start).getTime(), end = new Date(d.range.end).getTime();
@@ -381,11 +417,10 @@ function ticks(d, X0, X1) {
 }
 
 function map(d, lines, now) {
-  const X0 = 260, X1 = 1150, GAP = 90, Y0 = 80;
+  const W = 1020, X0 = 196, X1 = 1004, GAP = 64, Y0 = 52;
   const ys = lines.map((_, i) => Y0 + i * GAP);
   const last = ys[ys.length - 1];
-  const hubY = (ys[0] + last) / 2;
-  const H = last + 70;
+  const yb = last + 36, H = yb + 24;
   const { out: days, x, start, end } = ticks(d, X0, X1);
   const nowT = Math.min(Math.max(now.getTime(), start), end);
   const nowX = x(nowT);
@@ -394,46 +429,40 @@ function map(d, lines, now) {
   const byLine = {};
   for (const j of d.jobs) (byLine[j.line] ||= []).push(j);
 
-  let s = `<svg viewBox="0 0 1312 ${H}" role="img" aria-label="${esc(`${d.totals.jobs} jobs routed across ${lines.length} lines, ${d.totals.missed} missed`)}">`;
-  s += `<g stroke="var(--rule)" stroke-width="1">` + days.map((t) => `<path d="M${t.x.toFixed(1)} 34 V${last + 34}"/>`).join("") + `<path d="M${X1} 34 V${last + 34}"/></g>`;
-  s += `<g class="t-day">` + days.map((t) => `<text x="${(t.x + 6).toFixed(1)}" y="${last + 56}">${t.label}</text>`).join("") + `</g>`;
-  s += `<g fill="none" stroke-linejoin="round" stroke-width="12"><path d="M0 ${hubY} H150" stroke="var(--ink)" stroke-width="10"/>`;
-  lines.forEach((l, i) => {
-    const dash = l.pool ? "" : ` stroke-dasharray="12 8"`;
-    s += `<path d="M150 ${hubY} C200 ${hubY} 200 ${ys[i]} 250 ${ys[i]} H260" stroke="${l.color}"${dash}/>`;
-  });
-  s += `</g><g fill="none" stroke-width="14">`;
-  lines.forEach((l, i) => {
-    s += `<path d="M258 ${ys[i]} H${lineEnd.toFixed(1)}" stroke="${l.color}"${l.pool ? "" : ` stroke-dasharray="12 8"`}/>`;
-  });
-  s += `</g>`;
-  if (live) s += `<g fill="none" stroke="var(--rule)" stroke-width="4">` + ys.map((y) => `<path d="M${nowX.toFixed(1)} ${y} H${X1}"/>`).join("") + `</g>`;
-  s += `<circle cx="150" cy="${hubY}" r="17" fill="var(--paper)" stroke="var(--ink)" stroke-width="5"/>`;
-  s += `<text x="168" y="${hubY + 47}" text-anchor="end" class="t-in" style="fill:var(--ink);font-weight:700">allo-router</text>`;
-  s += `<text x="0" y="${hubY - 17}" class="t-in">${esc(`${plural(d.computers.length, "computer")}, ${plural(d.totals.jobs, "job")}`)}</text>`;
+  let s = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(`${d.totals.jobs} jobs routed across ${lines.length} lines, ${d.totals.missed} missed`)}">`;
+  s += `<g stroke="var(--rule)">` + days.map((t) => `<line x1="${t.x.toFixed(1)}" y1="22" x2="${t.x.toFixed(1)}" y2="${yb}"/>`).join("") + `<line x1="${X1}" y1="22" x2="${X1}" y2="${yb}"/></g>`;
+  s += `<g class="d-ax">` + days.map((t) => `<text x="${(t.x + 5).toFixed(1)}" y="${yb + 18}">${t.label}</text>`).join("") + `</g>`;
   if (live) {
-    s += `<path d="M${nowX.toFixed(1)} 22 V${last + 34}" stroke="var(--ink)" stroke-width="1.5"/>`;
-    const lab = `Now, ${DAYS[now.getUTCDay()]} ${hhmm(now)}`;
-    s += `<text x="${(nowX + (nowX > X1 - 140 ? -6 : 6)).toFixed(1)}" y="20" text-anchor="${nowX > X1 - 140 ? "end" : "start"}" style="font-size:13.5px;font-weight:700;fill:var(--ink)">${lab}</text>`;
+    s += `<line x1="${nowX.toFixed(1)}" y1="14" x2="${nowX.toFixed(1)}" y2="${yb + 2}" stroke="var(--ink)" stroke-width="1.5"/>`;
+    const near = nowX > X1 - 90;
+    s += `<text x="${(nowX + (near ? -4 : 0)).toFixed(1)}" y="10" text-anchor="${near ? "end" : "middle"}" class="d-ax" style="fill:var(--ink);font-weight:700">Now, ${DAYS[now.getUTCDay()]} ${hhmm(now)}</text>`;
   }
-  s += `<text x="1308" y="20" text-anchor="end" class="t-day" style="font-weight:700;fill:var(--ink)">Share of jobs</text>`;
+  // Two tracks with the same plan name (one per computer) get the computer added, as in the ledger.
+  const seen = {};
+  for (const l of lines) seen[l.short] = (seen[l.short] || 0) + 1;
   lines.forEach((l, i) => {
     const y = ys[i];
-    const red = l.pool ? "" : ` style="fill:var(--reset-text)"`;
-    const counts = l.direct
-      ? `${plural(l.jobs, "own task")}${sentText(l) ? ` · ${sentText(l)}` : ""}`
-      : `${plural(l.jobs, "task")}${l.runs > l.jobs ? ` · ${plural(l.runs, "run")}` : ""}${l.missed && l.pool ? `, ${l.missed} missed` : ""}`;
+    const full = seen[l.short] > 1 && l.computer ? `${l.short}, ${l.computer}` : l.short;
+    const name = full.length > 22 ? full.slice(0, 21) + "…" : full;
     const lt = leftText(l.limit);
-    s += `<text x="262" y="${y - 24}" class="t-name"${red}>${esc(l.name)}<tspan class="t-num" dx="12"${red}>${counts}</tspan>${lt ? `<tspan class="t-left" dx="12">${esc(lt)}${l.limit.how === "manual" ? " (manual)" : ""}</tspan>` : ""}</text>`;
-    const share = l.share ?? Math.round((l.jobs / (d.totals.jobs || 1)) * 100);
-    s += `<text x="1308" y="${y + 6}" text-anchor="end" class="t-share"${red}>${share}%</text>`;
-    const cap = l.direct ? "dispatcher, no API value" : l.pool ? (l.priced ? `${money(l.saved)} API value (est.)` : "API value n/a") : "missed, no plan fit";
-    s += `<text x="1308" y="${y + 26}" text-anchor="end" class="t-est">${cap}</text>`;
+    s += `<text x="0" y="${y + 5}"><title>${esc(l.name)}</title><tspan class="d-nm"${l.pool ? "" : ' style="fill:var(--red)"'}>${esc(name)}</tspan>${lt ? `<tspan class="d-v" dx="6">${esc(lt.replace(/ left$/, ""))}${l.limit.how === "manual" ? " (manual)" : ""}</tspan>` : ""}</text>`;
+    s += `<line x1="${X0}" y1="${y}" x2="${lineEnd.toFixed(1)}" y2="${y}" stroke="${l.color}" stroke-width="7"${l.pool ? "" : ' stroke-dasharray="9 7"'}/>`;
+    if (live) s += `<line x1="${nowX.toFixed(1)}" y1="${y}" x2="${X1}" y2="${y}" stroke="var(--rule)" stroke-width="3"/>`;
+    // Resets first, so a task box drawn over one stays readable; the mark's ends and its label still show.
+    const marks = l.limit && l.limit.window === "5h" ? [nextReset(l.limit, now)].filter((r) => r && r.getTime() <= end).map((r) => r.getTime()) : resetsBetween(l.limit, start, end);
+    for (const t of marks) {
+      const rx = x(t);
+      const past = t < now.getTime();
+      const flip = rx > X1 - 150;
+      s += `<g class="reset${past ? " past" : ""}"><title>${esc(`${l.short} resets ${localDate(new Date(t))}`)}</title>` +
+        `<path class="halo" d="M${rx.toFixed(1)} ${y - 12} v24"/><path d="M${rx.toFixed(1)} ${y - 12} v24 M${rx.toFixed(1)} ${y} h9"/>` +
+        `<text x="${(rx + (flip ? -6 : 6)).toFixed(1)}" y="${y + 26}" text-anchor="${flip ? "end" : "start"}">${esc(`${past ? "reset" : "resets"} ${localWhen(new Date(t))}`)}</text></g>`;
+    }
     let prevEnd = X0;
     let hidden = 0;
     for (const j of byLine[l.key] || []) {
       const label = chipLabel(j);
-      const w = Math.max(34, Math.min(120, 10 + label.length * 7.2));
+      const w = Math.max(30, Math.min(116, 10 + label.length * 6.4));
       const cx = Math.max(x(parseMinute(j.at).getTime()), prevEnd + 4);
       if (cx + w > X1 - 4) { hidden++; continue; }
       prevEnd = cx + w;
@@ -445,33 +474,32 @@ function map(d, lines, now) {
         missed ? j.miss.map((m) => WHY[m] || m).join(", ") : null].filter(Boolean).join(" · ");
       const fillAttr = (!missed && fill) ? ` style="fill:${fill}"` : "";
       s += `<g class="${missed ? "car-x" : (isRun ? "car-run" : "car")}"><title>${esc(tip)}</title>` +
-        `<rect x="${cx.toFixed(1)}" y="${y - 9}" width="${w}" height="18"${fillAttr}/><text x="${(cx + w / 2).toFixed(1)}" y="${y + 4}">${esc(label)}</text></g>`;
+        `<rect x="${cx.toFixed(1)}" y="${y - 9}" width="${w.toFixed(1)}" height="18"${fillAttr}/><text x="${(cx + w / 2).toFixed(1)}" y="${y + 4}">${esc(label)}</text></g>`;
     }
-    const marks = l.limit && l.limit.window === "5h" ? [nextReset(l.limit, now)].filter((d) => d && d.getTime() <= end).map((d) => d.getTime()) : resetsBetween(l.limit, start, end);
-    for (const t of marks) {
-      const rx = x(t);
-      const past = t < now.getTime();
-      s += `<g class="reset${past ? " past" : ""}"><title>${esc(`${l.short} resets ${localDate(new Date(t))}`)}</title>` +
-        `<path class="halo" d="M${rx.toFixed(1)} ${y - 14} V${y + 12}"/><path d="M${rx.toFixed(1)} ${y - 14} V${y + 12}"/><circle cx="${rx.toFixed(1)}" cy="${y + 17}" r="5"/>` +
-        `<text x="${(rx + (rx > X1 - 150 ? -10 : 10)).toFixed(1)}" y="${y + 22}" text-anchor="${rx > X1 - 150 ? "end" : "start"}">${esc(`${past ? "reset" : "resets"} ${localWhen(new Date(t))}`)}</text></g>`;
-    }
-    if (hidden) s += `<text x="${X1 - 4}" y="${y + 26}" text-anchor="end" class="more"><a href="#jobs">+${hidden} more, see all jobs below ↓</a></text>`;
+    if (hidden) s += `<text x="${X1}" y="${y - 14}" text-anchor="end" class="more"><a href="#jobs">+${hidden} more, see all jobs below ↓</a></text>`;
   });
   s += `</svg>`;
-  const stripe = (ls) => { const c = ls.filter((l) => l.pool).map((l) => l.color); const w = 38 / (c.length || 1); return `<svg width="38" height="12" aria-hidden="true">${c.map((col, i) => `<rect x="${(i * w).toFixed(1)}" y="3" width="${w.toFixed(1)}" height="6" fill="${col}"/>`).join("")}</svg>`; };
+  const stripe = (ls) => { const c = ls.filter((l) => l.pool).map((l) => l.color); const w = 26 / (c.length || 1); return `<svg width="26" height="8" aria-hidden="true">${c.map((col, i) => `<rect x="${(i * w).toFixed(1)}" y="1" width="${w.toFixed(1)}" height="6" fill="${col}"/>`).join("")}</svg>`; };
   const scale = d.range.key === "30d" ? "period" : "week";
-  return `<div class="map">${s}</div>
-  <div class="legend" aria-label="How to read the map">
-    <span class="lg-title">How to read it</span>
-    <span class="lg">${stripe(lines)}<span><b>Each line is a plan.</b> Its color matches the plan above.</span></span>
-    <span class="lg"><svg width="38" height="18" aria-hidden="true"><rect width="38" height="18" rx="2" fill="var(--ink)"/><text x="19" y="13" text-anchor="middle" style="fill:var(--paper);font-size:10px;font-weight:700">Docs</text></svg><span><b>Each box is a task</b> that plan did.</span></span>
-    <span class="lg"><svg width="38" height="18" aria-hidden="true"><rect x="1" y="1" width="36" height="16" rx="2" fill="var(--paper)" stroke="var(--reset-text)" stroke-width="1.5" stroke-dasharray="4 3"/></svg><span><b>Dashed red</b> = missed, no plan had room.</span></span>
-    <span class="lg"><svg width="38" height="22" aria-hidden="true"><rect y="8" width="38" height="6" fill="var(--rule)"/><path d="M19 1 V21" stroke="var(--ink)" stroke-width="2"/><circle cx="19" cy="11" r="5" fill="var(--paper)" stroke="var(--ink)" stroke-width="2.5"/></svg><span><b>Ring</b> = the plan's limit resets here.</span></span>
-    ${live ? `<span class="lg"><svg width="38" height="12" aria-hidden="true"><rect y="4" width="38" height="4" fill="var(--rule)"/></svg><span><b>Gray</b> = rest of the ${scale}.</span></span>` : ""}
-    <span class="lg-note">Days are to scale (day lines at midnight UTC); reset labels are in your time zone, ${esc(zoneShort(new Date()))}. Resets sit at their exact time; a box starts at its job's time and only shifts right to avoid overlapping.</span>
+  return `${chipToggle(d)}<div class="scroll">${s}</div>
+  <div class="d-legend" aria-label="How to read the diagram">
+    <span>${stripe(lines)}Each track is a plan, coloured as in the ledger</span>
+    <span><svg width="20" height="12" aria-hidden="true"><rect width="20" height="12" fill="#16140F"/></svg>A task that plan did</span>
+    <span><svg width="20" height="12" aria-hidden="true"><rect x="1" y="1" width="18" height="10" fill="none" stroke="#B3200F" stroke-width="1.5" stroke-dasharray="3 2"/></svg>Missed, no plan had room</span>
+    <span><svg width="12" height="14" aria-hidden="true"><path d="M3 1 v12 M3 7 h7" stroke="#B3200F" stroke-width="2.5"/></svg>The plan’s limit resets</span>
+    ${live ? `<span><svg width="26" height="8" aria-hidden="true"><line x1="0" y1="4" x2="26" y2="4" stroke="#D6D0C2" stroke-width="3"/></svg>Rest of the ${scale}</span>` : ""}
+    <span class="note">Days are to scale (day lines at midnight UTC); reset labels are in your time zone, ${esc(zoneShort(new Date()))}. Resets sit at their exact time; a box starts at its job's time and only shifts right to avoid overlapping.</span>
   </div>`;
 }
 
+function plansSection(d, lines, now) {
+  const diagram = lines.length ? `<details class="diagram" id="diagram"${diagramOpen ? " open" : ""}>
+    <summary><b class="when-closed">Show</b><b class="when-open">Hide</b> route diagram<span>each plan as a track across the ${d.range.key === "30d" ? "30 days" : "week"}, with its tasks and resets</span></summary>
+    ${diagramOpen ? map(d, lines, now) : ""}</details>` : "";
+  return ledger(d, lines, now) + diagram;
+}
+
+// ---------- 04 Jobs ----------
 function tables(d, lines) {
   const t = d.totals;
   const rows = lines.map((l) => `<div role="row"><span class="seg" style="background:${l.color}"></span><span>${esc(l.short)}${l.computer ? ` <span class="est">${esc(l.computer)}</span>` : ""}</span>` +
@@ -481,65 +509,28 @@ function tables(d, lines) {
   const misses = d.jobs.filter((j) => j.miss.length).map((j) => {
     const l = lineOf[j.line];
     const at = parseMinute(j.at);
-    return `<div role="row"><span class="id">#${j.n}</span><span>${esc(j.title || ("#" + j.n))}</span><span>${DAYS[at.getUTCDay()]} ${hhmm(at)}</span><span class="seg" style="background:${l.color}"></span>` +
-      `<span>${esc(l.short)}</span><span class="why">${j.miss.map((m) => WHY[m] || m).join("; ")}</span></div>`;
+    return `<div role="row"><span class="id">#${j.n}</span><span>${esc(j.title || ("#" + j.n))}<span class="why">${j.miss.map((m) => WHY[m] || m).join("; ")}</span></span><span class="at">${DAYS[at.getUTCDay()]} ${hhmm(at)}</span>` +
+      `<span class="p"><span class="seg" style="background:${l.color}"></span>${esc(l.short)}</span></div>`;
   }).join("");
   const period = { week: "this week", last: "last week", "30d": "the last 30 days" }[d.range.key];
-  return `<section class="part">
+  return `<div class="jobs">
     <div>
-      <h2>Where jobs went</h2>
-      <p class="intro">Totals for ${period} by plan. API value (est.) is what the work would have cost at public API list prices, computed only from token usage or cost the tool itself reported; anything else shows n/a. Every task counts once, under the plan that did it. Grok Bot\u2019s own work, done without routing, has its own row. Plans show as ChatGPT, Claude Personal or Claude Team when the upload can tell them apart; otherwise as pool-N.</p>
-    </div>
-    <div>
+      <h3>Where jobs went <span class="dim">· by plan</span></h3>
       <div class="tbl" role="table" aria-label="Jobs by plan">
         <div class="h" role="row"><span></span><span>Plan</span><span class="r">Jobs</span><span class="r">Ran</span><span class="r">Missed</span><span class="r">API value (est.)</span></div>
         ${rows}
         <div role="row" class="tot"><span></span><span>Total</span><span class="r">${t.jobs}</span><span class="r">${t.ran}</span><span class="r${t.missed ? " no" : ""}">${t.missed}</span><span class="r">${t.priced ? money(t.saved) : "n/a"}</span></div>
       </div>
-      ${misses ? `<h3>Misses</h3><div class="misses" role="table" aria-label="Missed jobs">${misses}</div>` : `<h3>No misses</h3>`}
+      <p class="fine">Totals for ${period} by plan. API value (est.) is what the work would have cost at public API list prices, computed only from token usage or cost the tool itself reported; anything else shows n/a. Every task counts once, under the plan that did it. Grok Bot’s own work, done without routing, has its own row. Plans show as ChatGPT, Claude Personal or Claude Team when the upload can tell them apart; otherwise as pool-N.</p>
     </div>
-  </section>`;
+    <div id="misses">
+      <h3>${misses ? `Misses <span class="dim">· oldest first</span>` : "No misses"}</h3>
+      ${misses ? `<div class="misses" role="table" aria-label="Missed jobs">${misses}</div>` : `<p class="fine">Every task ${period} found a plan with room.</p>`}
+    </div>
+  </div>`;
 }
 
-function computers(d) {
-  const rows = d.computers.map((c) => {
-    const up = c.last_upload_at ? (() => { const a = new Date(c.last_upload_at); return `Last upload ${mdy(a)} at ${hhmm(a)}.`; })() : "No upload yet.";
-    return `<div><dt>${esc(c.name)}</dt><dd>${c.connected_at ? `Connected ${mdy(new Date(c.connected_at))}.` : ""} ${up} ${plural(c.jobs, "job")} in this period.</dd>` +
-      `<button class="link act" data-disconnect="${c.id}" data-name="${esc(c.name)}">Disconnect</button></div>`;
-  }).join("");
-  return `<section class="part">
-    <div>
-      <h2>Computers</h2>
-      <p class="intro">Each one was connected with <code>allo-router connect</code> and has its own upload token. A token can add jobs, but it can't read anything.</p>
-    </div>
-    <dl class="rows">${rows}</dl>
-  </section>`;
-}
-
-function empty() {
-  return `<section class="empty">
-    <h2>Connect a computer</h2>
-    <ol>
-      <li>Update Allo Router to 0.5 or later on the computer that runs your jobs.</li>
-      <li>In your router folder, run <code>allo-router connect --show</code> to see exactly what would be sent. Nothing is sent yet.</li>
-      <li>Run <code>allo-router connect</code> and approve the code it shows on this site. Jobs appear here as they finish.</li>
-    </ol>
-  </section>`;
-}
-
-const about = `<section class="part">
-    <div>
-      <h2>What this page gets</h2>
-      <p class="intro">The same list is on the <a href="/privacy">privacy page</a> and in <code>allo-router connect --show</code>, which prints the next upload without sending it.</p>
-    </div>
-    <dl class="rows">
-      <div class="two"><dt>Sent</dt><dd>A hashed job id, when it started (to the minute), the plan it went to as pool-1, pool-2, its type and provider (ChatGPT / Claude Personal / Claude Team when known), a short job title, model and effort when set on the plan, whether it ran, why it missed and the API value (est.).</dd></div>
-      <div class="two"><dt>Never sent</dt><dd>Prompts, code, commands, output, file names or paths, plan labels you typed, where a reading came from, or keys. Plan readings (% or $ left, reset time, when read, auto or manual) only if you turn them on with <code>allo-router connect --share-readings on</code>.</dd></div>
-      <div class="two"><dt>Stop</dt><dd><code>allo-router disconnect</code> revokes the token and deletes that computer's history here. Your local dashboard keeps working either way.</dd></div>
-    </dl>
-  </section>`;
-
-// ---------- Jobs: pools -> tasks -> runs, collapsed by default ----------
+// Every task: pools -> tasks -> runs, collapsed by default
 const openKeys = new Set();     // survives the polling re-render
 const shown = new Map();        // key -> how many rows to show
 const PAGE = 50;
@@ -574,11 +565,10 @@ function jobsSection(d, lines) {
     }).join("");
     const head = `<div class="task-h"><span>Task</span><span class="r">Runs</span><span>Model</span><span>Effort</span><span class="r">API value</span><span>First run</span><span>Last run</span></div>`;
     return `<details class="pool" data-k="${esc(pk)}"${openKeys.has(pk) ? " open" : ""}><summary><span class="sw" style="background:${l.color}"></span>` +
-      `<b>${esc(l.name)}</b><span class="meta">${plural(tasks.length, "task")} · ${plural(l.runs || 0, "run")}</span><span class="chev" aria-hidden="true">▸</span></summary>` +
-      (openKeys.has(pk) ? head + rows + more(pk, tasks.length) : "") + `</details>`;
+      `<b>${esc(l.name)}</b><span class="meta">${plural(tasks.length, "task")} · ${plural(l.runs || 0, "run")}</span><span class="chev" aria-hidden="true"></span></summary>` +
+      (openKeys.has(pk) ? `<div class="task-wrap">${head + rows + more(pk, tasks.length)}</div>` : "") + `</details>`;
   }).join("");
-  return `<section class="jobs" id="jobs"><div class="jobs-head"><h2 class="cond">Jobs</h2>` +
-    `<p class="intro">Every task by plan. Click a plan to see its tasks, and a task to see each run.</p></div>${pools}</section>`;
+  return `<div class="every" id="jobs"><h3>Every task <span class="dim">· by plan. Click a plan to see its tasks, and a task to see each run.</span></h3>${pools}</div>`;
 }
 function wireJobs() {
   for (const el of document.querySelectorAll("details[data-k]")) {
@@ -592,23 +582,111 @@ function wireJobs() {
   for (const b of document.querySelectorAll("[data-more]")) {
     b.onclick = () => { const k = b.getAttribute("data-more"); shown.set(k, (shown.get(k) || PAGE) + PAGE); render(); };
   }
+  const dg = document.getElementById("diagram");
+  if (dg) dg.addEventListener("toggle", () => {
+    const was = diagramOpen;
+    diagramOpen = dg.open;
+    try { localStorage.setItem("allo.diagram", dg.open ? "open" : "closed"); } catch {}
+    if (was !== dg.open) render();
+  });
 }
+
+// ---------- 05 The period: counts, runs per day, API value ----------
+function period(d, now) {
+  const t = d.totals;
+  const start = new Date(d.range.start).getTime();
+  const nDays = Math.max(1, Math.round((new Date(d.range.end).getTime() - start) / 86400000));
+  const per = Array(nDays).fill(0);
+  for (const j of d.jobs) for (const r of j.list || []) {
+    const i = Math.floor((parseMinute(r.at).getTime() - start) / 86400000);
+    if (i >= 0 && i < nDays) per[i] += 1;
+  }
+  const top = Math.max(1, ...per);
+  const todayI = Math.floor((now.getTime() - start) / 86400000);
+  const bars = per.map((n, i) => {
+    const day = new Date(start + i * 86400000);
+    const lab = d.range.key === "30d" ? (i % 5 === 0 ? mdy(day).slice(3, 5) : "") : DAYS[day.getUTCDay()][0];
+    return `<div class="${i === todayI ? "today" : ""}${start + i * 86400000 > now.getTime() ? " future" : ""}" title="${DAYS[day.getUTCDay()]} ${mdy(day).slice(0, 5)}: ${plural(n, "run")}"><i style="height:${Math.round((n / top) * 72)}px"></i><span>${lab}</span></div>`;
+  }).join("");
+  const stats = `<div class="week">
+    <div><span class="fig">${t.jobs}</span><span class="dim">tasks</span></div><div><span class="fig">${t.runs ?? t.jobs}</span><span class="dim">runs</span></div>
+    <div><span class="fig">${t.ran}</span><span class="dim">ran</span></div><div class="${t.missed ? "alert" : ""}"><span class="fig">${t.missed}</span><span class="dim">missed</span></div>
+    <div><span class="dim" style="font-size:12px">Runs per day, UTC</span><div class="days" style="grid-template-columns:repeat(${nDays}, 1fr)" aria-label="${esc(`Runs per day: ${per.join(", ")}`)}">${bars}</div></div>
+  </div>`;
+  const comps = d.computers.filter((c) => c.last_upload_at).sort((a, b) => b.last_upload_at.localeCompare(a.last_upload_at));
+  let uploads = "No upload yet.";
+  if (comps.length) {
+    const lastC = comps[0], last = new Date(lastC.last_upload_at);
+    const day = mdy(last) === mdy(now) ? "today" : mdy(last);
+    uploads = `Last upload ${hhmm(last)} from ${esc(lastC.name)}, ${day} UTC.`;
+    if (comps.length > 1) { const a = new Date(comps[1].last_upload_at); uploads += ` ${esc(comps[1].name)} last uploaded at ${hhmm(a)}.`; }
+  }
+  const saved = t.priced
+    ? `<div class="saved"><span class="fig">${money(t.saved)}</span><p><b>API value (est.) ${PERIOD[d.range.key]}.</b> What the work would have cost at public API list prices, from real reported token usage or cost. ${t.priced} of ${t.runs ?? t.jobs} runs had usage; the rest show n/a. ${uploads}</p></div>`
+    : `<div class="saved"><span class="fig">n/a</span><p><b>API value n/a:</b> no run reported real token usage or cost yet. ${uploads}</p></div>`;
+  return stats + saved;
+}
+
+// ---------- 06 Computers, 07 What this page gets ----------
+function computers(d) {
+  const rows = d.computers.map((c) => {
+    const up = c.last_upload_at ? (() => { const a = new Date(c.last_upload_at); return `Last upload ${mdy(a)} at ${hhmm(a)}.`; })() : "No upload yet.";
+    return `<div><dt>${esc(c.name)}</dt><dd>${c.connected_at ? `Connected ${mdy(new Date(c.connected_at))}.` : ""} ${up} ${plural(c.jobs, "job")} in this period.</dd>` +
+      `<button class="link act" data-disconnect="${c.id}" data-name="${esc(c.name)}">Disconnect</button></div>`;
+  }).join("");
+  return `<p class="intro">Each one was connected with <code>allo-router connect</code> and has its own upload token. A token can add jobs, but it can't read anything.</p>
+    <dl class="rows">${rows}</dl>`;
+}
+
+function empty() {
+  return `<div class="connect">
+    <h1>Connect a computer</h1>
+    <ol>
+      <li>Update Allo Router to 0.5 or later on the computer that runs your jobs.</li>
+      <li>In your router folder, run <code>allo-router connect --show</code> to see exactly what would be sent. Nothing is sent yet.</li>
+      <li>Run <code>allo-router connect</code> and approve the code it shows on this site. Jobs appear here as they finish.</li>
+    </ol>
+  </div>`;
+}
+
+const about = `<p class="intro">The same list is on the <a href="/privacy">privacy page</a> and in <code>allo-router connect --show</code>, which prints the next upload without sending it.</p>
+    <dl class="rows">
+      <div class="two"><dt>Sent</dt><dd>A hashed job id, when it started (to the minute), the plan it went to as pool-1, pool-2, its type and provider (ChatGPT / Claude Personal / Claude Team when known), a short job title, model and effort when set on the plan, whether it ran, why it missed and the API value (est.).</dd></div>
+      <div class="two"><dt>Never sent</dt><dd>Prompts, code, commands, output, file names or paths, plan labels you typed, where a reading came from, or keys. Plan readings (% or $ left, reset time, when read, auto or manual) only if you turn them on with <code>allo-router connect --share-readings on</code>.</dd></div>
+      <div class="two"><dt>Stop</dt><dd><code>allo-router disconnect</code> revokes the token and deletes that computer's history here. Your local dashboard keeps working either way.</dd></div>
+    </dl>`;
 
 function render() {
   if (!data) return;
   const now = new Date();
   const lines = styleLines(data.lines);
-  const body = data.computers.length === 0
-    ? empty()
-    : queueSection(data) + (lines.length || (data.running && data.running.length) ? runningStrip(data, lines) + allocation(data, lines) + chipToggle(data) + map(data, lines, now) + jobsSection(data, lines) : `<section class="empty"><h2>No jobs in this period</h2><p class="intro">Jobs show up here after <code>run --execute</code> finishes them on a connected computer.</p></section>`) +
-      tables(data, lines) + computers(data);
-  const note = `<p class="note"><b>Only job numbers, plans, outcomes and estimates reach this page.</b> Job names and everything else stay on your computer; open <code>allo-router dashboard</code> there to see them. Times are UTC.</p>`;
-  document.getElementById("app").innerHTML = `${nav(data)}<div class="wrap">${note}${header(data, now)}${body}${about}
+  const start = new Date(data.range.start);
+  const scope = {
+    week: `Week of ${mdy(start)}, Monday to now`,
+    last: `Week of ${mdy(start)}, Monday to Sunday`,
+    "30d": `The 30 days to ${mdy(now)}`,
+  }[data.range.key];
+  const title = { week: "This week", last: "Last week", "30d": "30 days" }[data.range.key];
+  let n = 0;
+  const num = () => String(++n).padStart(2, "0");
+  let body;
+  if (data.computers.length === 0) {
+    body = sec(num(), "Start", empty());
+  } else {
+    const hasJobs = lines.length || (data.running && data.running.length);
+    body = sec(num(), "Now", `<div class="now"><div>${nowRunning(data, lines, now)}</div><div>${nowNext(data, lines, now)}</div><div class="warn">${nowNeeds(data, lines, now)}</div></div>`)
+      + sec(num(), "Suggested next", queueSection(data))
+      + sec(num(), "Plans", plansSection(data, lines, now))
+      + sec(num(), "Jobs", hasJobs ? tables(data, lines) + jobsSection(data, lines)
+        : `<p class="empty">No jobs in this period. Jobs show up here after <code>run --execute</code> finishes them on a connected computer.</p>`)
+      + sec(num(), title, period(data, now), `${scope}, from ${plural(data.computers.length, "computer")}`)
+      + sec(num(), "Computers", computers(data));
+  }
+  body += sec(num(), "This page", about, "what it gets");
+  document.getElementById("app").innerHTML = `<div class="wrap">${mast(data)}${body}
   <footer>
-    <span class="mark ext">Allo Router</span>
-    <span class="spots" id="spots" hidden></span>
-    <a href="/privacy">Privacy</a>
-    <button class="link" id="delete">Delete my account</button>
+    <p class="note"><b>Only job numbers, plans, outcomes and estimates reach this page.</b> Job names and everything else stay on your computer; open <code>allo-router dashboard</code> there to see them. Times are UTC.</p>
+    <p class="links"><span class="mark">Allo Router</span><span class="spots" id="spots" hidden></span><a href="/privacy">Privacy</a><button class="link" id="delete">Delete my account</button></p>
   </footer></div>`;
   const sp = data.spots;
   const el = document.getElementById("spots");
