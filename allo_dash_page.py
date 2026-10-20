@@ -1,5 +1,9 @@
 """The page `allo-router dashboard` serves. One self-contained HTML file: it fetches /api/state and draws it.
-Kept in a module (not a data file) so it ships with a plain `pip install`."""
+Kept in a module (not a data file) so it ships with a plain `pip install`.
+
+Layout (direction D of docs/mockups): a ledger in numbered sections. 01 Now (what is running, a countdown to the
+next scheduled run with its pre-run checks, what needs you), 02 Plans (amount left, runway to reset, with the route
+diagram as a fold-out), 03 Jobs (queued and ran today), 04 This week."""
 
 PAGE = r"""<!DOCTYPE html>
 <html lang="en">
@@ -12,127 +16,157 @@ PAGE = r"""<!DOCTYPE html>
   @font-face { font-family: "Archivo"; src: url(/fonts/archivo-latin-var.woff2) format("woff2"); font-weight: 100 900; font-stretch: 62% 125%; font-display: swap; }
   @font-face { font-family: "JetBrains Mono"; src: url(/fonts/jetbrains-mono-latin-var.woff2) format("woff2"); font-weight: 100 800; font-display: swap; }
   :root {
-    --paper: #E4E9E3; --ink: #0E1D18; --muted: #4F5E57; --rule: #BCC6BE; --none: #9AA59F;
-    --codex: #2446D6; --claude: #E39B0B; --credit: #9A2C7C; --other: #2F6F73;
-    --codex-text: #2446D6; --claude-text: #8A5A00; --credit-text: #9A2C7C; --other-text: #2F6F73;
-    --stop: #D3261A; --reset-text: #B3200F;
-    --sans: "Archivo", "Arial Narrow", ui-sans-serif, system-ui, sans-serif;
+    --paper: #F2EFE7; --ink: #16140F; --muted: #6B665B; --rule: #D6D0C2; --well: #E4DFD2;
+    --codex: #2446D6; --claude: #D08C06; --credit: #8E2A74; --other: #2F6F73; --none: #A8A194;
+    --red: #B3200F;
+    --sans: "Archivo", "Helvetica Neue", ui-sans-serif, system-ui, sans-serif;
     --mono: "JetBrains Mono", ui-monospace, Menlo, monospace;
   }
   * { box-sizing: border-box; }
   html, body { margin: 0; background: var(--paper); color: var(--ink); }
-  body { font: 400 15px/1.45 var(--sans); font-variant-numeric: tabular-nums; }
+  body { font: 400 15px/1.5 var(--sans); font-variant-numeric: tabular-nums lining-nums; }
   a { color: inherit; }
   a:focus-visible { outline: 3px solid var(--ink); outline-offset: 2px; }
-  .wrap { max-width: 1440px; margin: 0 auto; padding: 0 56px 40px; }
-  .mono { font-family: var(--mono); font-size: 13px; }
+  .wrap { max-width: 1280px; margin: 0 auto; padding: 0 48px 56px; }
+  .mono { font-family: var(--mono); font-size: 12.5px; }
   .dim { color: var(--muted); }
+  .fig { font-weight: 300; letter-spacing: -0.02em; }
+  .bad { color: var(--red); font-weight: 600; }
+  .err { color: var(--red); font-weight: 600; }
+  .empty { padding: 4px 0; color: var(--muted); }
 
-  header { display: flex; align-items: baseline; flex-wrap: wrap; gap: 8px 28px; padding: 18px 0 14px; border-bottom: 1px solid var(--rule); }
-  .mark { font-variation-settings: "wdth" 125; font-stretch: 125%; font-weight: 800; font-size: 19px; letter-spacing: -0.01em; }
-  .example-tag { font-size: 15px; font-weight: 700; color: var(--reset-text); }
-  header .path { color: var(--muted); margin-right: auto; overflow-wrap: anywhere; }
-  header .meta { color: var(--muted); }
-  header .meta b { color: var(--ink); font-weight: 600; }
-  .example-line { margin: 0; padding: 10px 0; border-bottom: 1px solid var(--rule); font-weight: 600; }
-  .example-line span { font-weight: 400; color: var(--muted); }
+  .mast { display: grid; grid-template-columns: 1fr auto 1fr; align-items: end; gap: 0 16px; padding: 26px 0 10px; border-bottom: 3px double var(--ink); }
+  .mast .mark { font-stretch: 125%; font-variation-settings: "wdth" 125; font-weight: 800; font-size: 22px; letter-spacing: -0.01em; }
+  .mast .date { text-align: center; font-size: 13px; letter-spacing: .04em; white-space: nowrap; }
+  .mast .right { text-align: right; font-size: 13px; color: var(--muted); overflow-wrap: anywhere; }
+  .mast .right b { color: var(--red); font-weight: 700; letter-spacing: .06em; text-transform: uppercase; font-size: 11.5px; margin-left: 10px; white-space: nowrap; }
 
-  .band { display: grid; grid-template-columns: minmax(0, 1fr) 460px; column-gap: 56px; }
-  .band > * { min-width: 0; }
-  .band > .side { border-left: 1px solid var(--rule); padding-left: 40px; }
-  .status { padding: 22px 0 18px; }
-  .big { margin: 0; font-variation-settings: "wdth" 62; font-stretch: 62%; font-weight: 820; font-size: 64px; line-height: .95; letter-spacing: -0.01em; }
-  .sub { margin: 12px 0 0; font-size: 16px; max-width: 46em; }
-  .sub .dim { color: var(--muted); }
-  .why-line { margin: 8px 0 0; font-size: 15px; color: var(--muted); max-width: 46em; }
-  .why-line b { color: var(--ink); font-weight: 600; }
-  .issues { margin: 12px 0 0; padding: 0; list-style: none; max-width: 52em; }
-  .issues li { padding: 7px 0; border-top: 1px solid var(--rule); font-size: 15px; }
-  .issues li:first-child { border-top: 0; padding-top: 2px; }
-  .next .clock { font-variation-settings: "wdth" 62; font-stretch: 62%; font-weight: 820; font-size: 48px; line-height: 1; margin: 0; }
-  .next .when { margin: 6px 0 0; font-size: 17px; font-weight: 700; }
-  .next p { margin: 4px 0 0; font-size: 15px; }
-  .next .cmd { margin-top: 10px; color: var(--muted); font-size: 14px; }
-  .next .cmd code { font-family: var(--mono); font-size: 13px; color: var(--ink); }
-  .ok-text { color: var(--ink); }
-  .bad { color: var(--reset-text); font-weight: 600; }
+  .sec { display: grid; grid-template-columns: 140px minmax(0, 1fr); gap: 24px; padding: 22px 0 26px; border-bottom: 1px solid var(--ink); }
+  .sec > * { min-width: 0; }
+  .sec > h2 { margin: 0; font-size: 12px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; }
+  .sec > h2 span { display: block; font-family: var(--mono); font-weight: 400; color: var(--muted); letter-spacing: 0; margin-bottom: 4px; }
+  .sec > h2 .since { font-family: var(--sans); text-transform: none; letter-spacing: 0; font-weight: 400; margin: 4px 0 0; }
 
-  .yard { border-top: 1px solid var(--rule); padding-top: 8px; overflow-x: auto; }
-  .yard > svg { display: block; width: 100%; min-width: 900px; height: auto; }
-  .yard > svg text { paint-order: stroke; stroke: var(--paper); stroke-width: 4px; stroke-linejoin: round; }
-  .yard > svg .car-q text, .yard > svg .car-s text, .yard > svg .car-x text { stroke: none; }
-  .yard text { font-family: var(--sans); }
-  .ax { font-size: 13px; fill: var(--muted); }
-  .ax-now { font-size: 13px; font-weight: 700; fill: var(--ink); }
-  .nm { font-size: 15px; font-weight: 700; fill: var(--ink); }
-  .lf { font-size: 15px; font-weight: 600; fill: var(--ink); }
-  .pace { font-size: 13.5px; fill: var(--muted); }
-  .rs { font-size: 13.5px; font-weight: 700; fill: var(--reset-text); }
-  .car-q rect { fill: var(--paper); stroke: var(--ink); stroke-width: 1.5; }
-  .car-q text { fill: var(--ink); font-size: 11px; font-weight: 700; text-anchor: middle; }
-  .car-s rect { fill: var(--ink); }
-  .car-s text { fill: var(--paper); font-size: 11px; font-weight: 700; text-anchor: middle; }
-  .car-x rect { fill: var(--paper); stroke: var(--reset-text); stroke-width: 1.5; stroke-dasharray: 3 2; }
-  .car-x text { fill: var(--reset-text); font-size: 11px; font-weight: 700; text-anchor: middle; }
-  .legend { display: flex; flex-wrap: wrap; gap: 6px 26px; margin: 6px 0 0; padding: 0 0 12px; font-size: 13.5px; color: var(--muted); }
-  .legend svg { vertical-align: middle; margin-right: 7px; }
+  /* 01 Now: running, next run, needs you */
+  .now { display: grid; grid-template-columns: 1.5fr 1fr 1fr; }
+  .now > div { min-width: 0; padding: 0 28px; border-left: 1px solid var(--rule); }
+  .now > div:first-child { padding-left: 0; border-left: 0; }
+  .label { margin: 0 0 8px; font-size: 12px; color: var(--muted); }
+  .now h1 { margin: 0; font-size: 38px; line-height: 1.02; font-weight: 300; letter-spacing: -0.02em; overflow-wrap: anywhere; }
+  .now h1 b { font-weight: 700; }
+  .now p { margin: 10px 0 0; }
+  .now .label { margin: 0 0 8px; }
+  .now .cmd { font-size: 13px; color: var(--muted); }
+  .warn h3 { margin: 0; font-size: 20px; line-height: 1.25; font-weight: 600; color: var(--red); }
+  .warn h3.ok { color: var(--ink); }
+  .warn h3 + p { margin-top: 6px; }
+  .warn .more { margin-top: 18px; }
+  .warn .issue { margin: 12px 0 0; padding-top: 10px; border-top: 1px solid var(--rule); color: var(--red); font-weight: 600; font-size: 14px; }
 
-  .lower { border-top: 1px solid var(--rule); padding-top: 14px; }
-  h2 { margin: 0 0 8px; font-size: 17px; font-weight: 700; }
-  h2 .dim { font-weight: 400; font-size: 15px; }
+  /* Next run: countdown and pre-run checks */
+  .count { margin: 0; font-size: 72px; line-height: .9; font-stretch: 62%; font-variation-settings: "wdth" 62; font-weight: 760; letter-spacing: -0.01em; white-space: nowrap; }
+  .count small { font-size: 20px; font-weight: 400; color: var(--muted); margin-left: 6px; font-stretch: 100%; font-variation-settings: "wdth" 100; letter-spacing: 0; }
+  .checks { list-style: none; margin: 14px 0 0; padding: 0; border-top: 1px solid var(--ink); }
+  .checks li { display: grid; grid-template-columns: 16px 1fr; padding: 6px 0; border-bottom: 1px solid var(--rule); font-size: 13.5px; }
+  .checks li::before { content: ""; width: 7px; height: 7px; background: var(--ink); margin-top: 7px; }
+  .checks li.no::before { background: var(--red); }
+  .checks li.no { color: var(--red); }
+
+  /* 02 Plans: the ledger */
   table { width: 100%; border-collapse: collapse; }
-  th { white-space: nowrap; text-align: left; font-weight: 500; color: var(--muted); font-size: 13.5px; padding: 4px 12px 8px 0; border-bottom: 1px solid var(--rule); }
-  td { padding: 10px 12px 10px 0; border-bottom: 1px solid var(--rule); vertical-align: baseline; }
+  th { text-align: left; font-size: 12px; font-weight: 500; color: var(--muted); padding: 0 16px 8px 0; border-bottom: 1px solid var(--ink); white-space: nowrap; }
+  td { padding: 14px 16px 14px 0; border-bottom: 1px solid var(--rule); vertical-align: middle; }
   tr:last-child td { border-bottom: 0; }
-  td.when, td.num, td.plan, td.res { white-space: nowrap; }
-  td.job { min-width: 260px; }
-  td.job b { font-weight: 700; margin-right: 6px; }
-  .num { text-align: right; }
-  .seg { display: inline-block; width: 16px; height: 5px; vertical-align: middle; margin-right: 8px; position: relative; top: -1px; }
-  .note { display: block; font-size: 13px; color: var(--muted); white-space: normal; }
-  .queued { color: var(--muted); }
-  .empty { padding: 12px 0; color: var(--muted); }
+  .r { text-align: right; }
+  .key { display: inline-block; width: 9px; height: 9px; margin-right: 10px; }
+  .plan { font-weight: 600; white-space: nowrap; }
+  .left { font-size: 34px; line-height: 1; text-align: right; white-space: nowrap; }
+  .left small { font-size: 13px; color: var(--muted); letter-spacing: 0; margin-left: 2px; }
+  .runway { width: 40%; }
+  .bar { position: relative; height: 10px; background: var(--well); }
+  .bar i { position: absolute; inset: 0 auto 0 0; }
+  .bar.line { height: 2px; margin: 4px 0; }
+  .bar.none { background: repeating-linear-gradient(90deg, var(--well) 0 6px, transparent 6px 10px); }
+  .bar-note { margin-top: 6px; font-size: 12.5px; color: var(--muted); }
+  .bar-note.bad { color: var(--red); }
+  .resets { white-space: nowrap; }
+  .resets b { display: block; font-weight: 600; }
+  .ids { font-family: var(--mono); font-size: 12.5px; white-space: nowrap; }
+  .ids .run { background: var(--ink); color: var(--paper); padding: 1px 4px; }
 
-  .stats { display: grid; grid-template-columns: repeat(4, 1fr); border-top: 1px solid var(--rule); border-bottom: 1px solid var(--rule); }
-  .stats div { padding: 8px 0 8px 14px; }
-  .stats div:first-child { padding-left: 0; }
-  .stats div + div { border-left: 1px solid var(--rule); }
-  .stats b { display: block; font-variation-settings: "wdth" 62; font-stretch: 62%; font-weight: 820; font-size: 40px; line-height: 1; }
-  .stats span { font-size: 13.5px; color: var(--muted); }
-  .stats .alert b { color: var(--reset-text); }
-  .defn { margin: 6px 0 0; font-size: 13px; color: var(--muted); }
-  .units { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; margin: 14px 0 0; align-items: end; }
-  .units .day { display: flex; flex-direction: column; align-items: center; gap: 4px; min-height: 64px; justify-content: flex-end; }
-  .units .count { font-size: 13px; font-weight: 700; }
-  .units .sq { display: flex; flex-wrap: wrap-reverse; width: 50px; gap: 2px; }
-  .units .sq i { width: 8px; height: 8px; display: block; }
-  .units .lbl { font-size: 12.5px; color: var(--muted); border-top: 1px solid var(--ink); width: 100%; text-align: center; padding-top: 3px; }
-  .units .today .lbl { color: var(--ink); font-weight: 700; }
-  .units .future .lbl { border-top-color: var(--rule); }
-  .used { margin-top: 12px; }
-  .used .row { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 12px; padding: 6px 0; border-top: 1px solid var(--rule); align-items: baseline; }
-  .used .row:first-child { border-top: 0; }
-  .used .v { font-weight: 700; text-align: right; }
-  .used .n { color: var(--muted); font-size: 13.5px; }
-  .est { margin: 10px 0 0; padding-top: 10px; border-top: 1px solid var(--ink); font-size: 14px; color: var(--muted); }
-  .est b { color: var(--ink); font-size: 16px; }
+  /* 02 Plans, fold-out: the route diagram. Closed by default so the ledger stays the answer. */
+  .diagram { margin-top: 14px; border-top: 1px solid var(--rule); }
+  .diagram summary { cursor: pointer; padding: 10px 0 0; font-size: 13px; font-weight: 600; list-style: none; }
+  .diagram summary::-webkit-details-marker { display: none; }
+  .diagram summary::before { content: "+"; display: inline-block; width: 16px; font-family: var(--mono); }
+  .diagram[open] summary::before { content: "\2212"; }
+  .diagram summary b { font-weight: 600; }
+  .diagram .when-open, .diagram[open] .when-closed { display: none; }
+  .diagram[open] .when-open { display: inline; }
+  .diagram summary span { font-weight: 400; color: var(--muted); margin-left: 6px; }
+  .diagram summary:focus-visible { outline: 2px solid var(--ink); outline-offset: 3px; }
+  .diagram .scroll { overflow-x: auto; padding-top: 10px; }
+  .diagram .scroll > svg { display: block; width: 100%; min-width: 760px; height: auto; }
+  .diagram text { font-family: var(--sans); }
+  .d-nm { font-size: 13.5px; font-weight: 600; fill: var(--ink); }
+  .d-v { font-size: 13.5px; fill: var(--muted); }
+  .d-ax { font-size: 11.5px; fill: var(--muted); }
+  .d-sub { font-size: 11.5px; fill: var(--muted); }
+  .d-rs { font-size: 11.5px; font-weight: 700; fill: var(--red); }
+  .d-chip { font: 700 10.5px var(--mono); text-anchor: middle; }
+  .d-legend { display: flex; flex-wrap: wrap; gap: 4px 22px; padding: 6px 0 0; font-size: 12px; color: var(--muted); }
+  .d-legend svg { vertical-align: middle; margin-right: 6px; }
+  .d-stuck { margin: 6px 0 0; font-size: 12.5px; color: var(--red); }
 
-  footer { margin-top: 28px; padding-top: 12px; border-top: 1px solid var(--rule); color: var(--muted); font-size: 13.5px; }
-  .err { color: var(--reset-text); font-weight: 600; }
+  /* 03 Jobs: queued and ran, side by side */
+  .jobs { display: grid; grid-template-columns: 1fr 1fr; gap: 40px; }
+  .jobs > div { min-width: 0; }
+  .jobs h3 { margin: 0 0 6px; font-size: 13px; font-weight: 600; }
+  .jobs h3 .dim { font-weight: 400; }
+  .jobs td { padding: 9px 12px 9px 0; vertical-align: baseline; }
+  .jobs td.id { font-family: var(--mono); font-size: 12.5px; color: var(--muted); width: 36px; }
+  .jobs td.p { white-space: nowrap; color: var(--muted); font-size: 13px; }
+  .jobs td.s { white-space: nowrap; text-align: right; font-size: 13px; }
+  .note { display: block; font-size: 12.5px; color: var(--muted); }
 
-  @media (max-width: 1100px) {
-    .band { grid-template-columns: minmax(0, 1fr); }
-    .band > .side { border-left: 0; padding-left: 0; border-top: 1px solid var(--rule); padding-top: 16px; margin-bottom: 16px; }
+  /* 04 Week */
+  .week { display: grid; grid-template-columns: repeat(4, 1fr) 1.6fr; border-top: 1px solid var(--rule); }
+  .week > div { padding: 12px 20px 4px; border-left: 1px solid var(--rule); }
+  .week > div:first-child { border-left: 0; padding-left: 0; }
+  .week .fig { display: block; font-size: 52px; line-height: 1; }
+  .week .alert .fig { color: var(--red); }
+  .days { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; align-items: end; height: 92px; margin-top: 6px; }
+  .days div { display: flex; flex-direction: column; justify-content: flex-end; height: 100%; }
+  .days i { display: block; background: var(--ink); }
+  .days span { font-size: 11.5px; color: var(--muted); text-align: center; border-top: 1px solid var(--ink); margin-top: 3px; padding-top: 2px; }
+  .days .today span { color: var(--ink); font-weight: 700; }
+  .days .future span { border-top-color: var(--rule); }
+  .saved { display: grid; grid-template-columns: auto 1fr; gap: 28px; align-items: baseline; margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--rule); }
+  .saved .fig { font-size: 52px; line-height: 1; }
+  .saved p { margin: 0; color: var(--muted); max-width: 52em; }
+  .saved p b { color: var(--ink); }
+
+  footer { padding-top: 12px; color: var(--muted); font-size: 12.5px; }
+
+  @media (max-width: 960px) {
+    .sec { grid-template-columns: 1fr; gap: 12px; }
+    .now, .jobs { grid-template-columns: 1fr; gap: 20px; }
+    .now > div { padding: 0; border: 0; }
+    .week { grid-template-columns: repeat(2, 1fr); }
+    .week > div:nth-child(3) { border-left: 0; padding-left: 0; }
+    .week > div:last-child { grid-column: 1 / -1; border-left: 0; padding-left: 0; }
   }
-  @media (max-width: 700px) {
-    .wrap { padding: 0 20px 32px; }
-    .big { font-size: 44px; line-height: 1; }
-    thead { display: none; }
-    tr { display: grid; grid-template-columns: auto 1fr auto; column-gap: 10px; padding: 10px 0; border-bottom: 1px solid var(--rule); }
-    td { border: 0; padding: 0; }
-    td.job { grid-column: 2; min-width: 0; }
-    td.plan, td.num { grid-column: 2; grid-row: auto; text-align: left; font-size: 13px; color: var(--muted); }
-    td.res { grid-column: 3; grid-row: 1; }
+  @media (max-width: 640px) {
+    .wrap { padding: 0 16px 32px; }
+    .mast { grid-template-columns: 1fr auto; } .mast .date { display: none; } .mast .mark { white-space: nowrap; } .mast .right .mono, .mast .right .sync { display: none; }
+    .now h1 { font-size: 32px; }
+    .jobs td.p { display: none; }
+    .saved { grid-template-columns: 1fr; gap: 8px; }
+    .ledger thead { display: none; }
+    .ledger tr { display: grid; grid-template-columns: 1fr auto; gap: 6px 12px; padding: 12px 0; border-bottom: 1px solid var(--rule); }
+    .ledger tr:last-child { border-bottom: 0; }
+    .ledger td { border: 0; padding: 0; width: auto; }
+    .ledger td.runway { grid-column: 1 / -1; }
   }
 </style>
 </head>
@@ -140,23 +174,37 @@ PAGE = r"""<!DOCTYPE html>
 <div class="wrap" id="app"><p class="empty">Loading the router's state…</p></div>
 <script>
 "use strict";
-const COLORS = { codex: ["#2446D6", "#16308F"], claude: ["#E39B0B", "#B57400"], credit: ["#9A2C7C", "#6E1F59"], other: ["#2F6F73", "#1E4A4D"] };
-const TEXT = { codex: "#2446D6", claude: "#8A5A00", credit: "#9A2C7C", other: "#2F6F73" };
+const COLORS = { codex: ["#2446D6", "#16308F"], claude: ["#D08C06", "#9A6500"], credit: ["#8E2A74", "#5E1B4C"], other: ["#2F6F73", "#1E4A4D"] };
+const TEXT = { codex: "#2446D6", claude: "#8A5A00", credit: "#8E2A74", other: "#2F6F73" };
+const WORDS = ["", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine"];
 const esc = s => String(s == null ? "" : s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const D = s => s ? new Date(s) : null;
 const pad = n => String(n).padStart(2, "0");
 const hhmm = d => `${pad(d.getHours())}:${pad(d.getMinutes())}`;
 const dayName = d => d.toLocaleDateString("en-US", { weekday: "short" });
 const mdy = d => `${pad(d.getMonth() + 1)}/${pad(d.getDate())}`;
+const plural = (n, one, many = one + "s") => `${n} ${n === 1 ? one : many}`;
+const cap = t => t ? t[0].toUpperCase() + t.slice(1) : t;
 function sameDay(a, b) { return a.toDateString() === b.toDateString(); }
 function when(d, now) { return sameDay(d, now) ? hhmm(d) : `${dayName(d)} ${hhmm(d)}`; }
 function span(sec) {
-  sec = Math.max(0, Math.round(sec));
+  sec = Math.max(0, Math.round(sec || 0));
   const h = Math.floor(sec / 3600), m = Math.floor(sec % 3600 / 60), s = sec % 60;
   if (h) return `${h} h ${m} min`;
   if (m) return `${m} min ${s} s`;
   return `${s} s`;
 }
+// "4:48": hours and minutes to go, for the countdown
+function hm(sec) { const m = Math.max(0, Math.floor(sec / 60)); return `${Math.floor(m / 60)}:${pad(m % 60)}`; }
+// "in 28 h", "in 3 d 13 h", "in 16 d"
+function inSpan(ms) {
+  const h = ms / 3600000;
+  if (h < 1) return `in ${Math.max(1, Math.round(h * 60))} min`;
+  if (h < 48) return `in ${Math.round(h)} h`;
+  const H = Math.round(h), d = Math.floor(H / 24), r = H % 24;
+  return h < 168 && r ? `in ${d} d ${r} h` : `in ${d} d`;
+}
+function resetText(d, now) { return d - now < 7 * 86400000 ? `${dayName(d)} ${hhmm(d)}` : `${dayName(d)} ${mdy(d)}`; }
 function ago(d, now) {
   const m = Math.round((now - d) / 60000);
   if (m < 1) return "just now";
@@ -167,6 +215,8 @@ function ago(d, now) {
 function clock(sec) { const m = Math.floor(sec / 60), s = Math.round(sec % 60); return `${m}:${pad(s)}`; }
 function money(x) { return x == null ? "n/a" : (x < 0 ? "-" : "") + "$" + Math.abs(x).toFixed(Math.abs(x) >= 0.1 || x === 0 ? 2 : 4); }
 function tokens(n) { return n == null ? "" : n.toLocaleString("en-US"); }
+const pace = p => p.kind !== "credit_usd" && !p.flags.length && p.left != null && p.hours_to_reset > 0 ? p.left / p.hours_to_reset : null;
+const paceText = x => x.toFixed(x < 1 ? 2 : 1);
 
 function palette(pools) {
   const seen = {}, out = {};
@@ -179,20 +229,18 @@ function palette(pools) {
 
 const RESULT = { ok: "Done", failed: "Failed", timeout: "Timed out", error: "Error", skipped: "Skipped", "dry-run": "Dry run" };
 
-function header(s, now, pal) {
-  const sch = s.schedule;
-  let sched = "No scheduled runs";
-  if (sch && sch.next_run) {
-    const n = D(sch.next_run), a = sch.agents.find(x => x.label === sch.runner);
-    const on = a && a.status && a.status.loaded !== false;
-    sched = `Scheduled runs <b>${on ? "on" : "not loaded"}</b>, ${hhmm(n)}${a && a.calendar && a.calendar.Weekday == null ? " daily" : ""}`;
-  }
+// Masthead: name, date and time, folder and last sync
+function mast(s, now) {
   const synced = s.pools.map(p => p.last_sync && D(p.last_sync.taken_at)).filter(Boolean).sort((a, b) => b - a)[0];
-  const sync = synced ? `Synced <b>${hhmm(synced)}</b>, ${ago(synced, now)}. To read again: <span class="mono">allo-router sync</span>`
-                      : `Not synced. Readings come from <span class="mono">allo-router sync</span> or <span class="mono">set</span>`;
-  return `<header><span class="mark">Allo Router</span>${s.example ? '<span class="example-tag">Example data</span>' : ""}
-    <span class="path mono">${esc(s.config_dir)}</span><span class="meta">${sched}</span><span class="meta">${sync}</span></header>
-    ${s.example ? '<p class="example-line">Example data. Every plan, job and number on this page is made up. <span>Run <span class="mono">allo-router dashboard</span> without <span class="mono">--example</span> to see your own.</span></p>' : ""}`;
+  const date = now.toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long" });
+  const sync = synced ? `<span class="sync" title="Synced ${hhmm(synced)}. To read again: allo-router sync"> · synced ${ago(synced, now)}</span>`
+                      : `<span class="sync" title="Readings come from allo-router sync or set"> · not synced</span>`;
+  return `<header class="mast"><span class="mark">Allo Router</span><span class="date">${esc(date)} · ${hhmm(now)}${s.tz ? " " + esc(s.tz) : ""}</span>
+    <span class="right"><span class="mono">${esc(s.config_dir)}</span>${sync}${s.example ? "<b>Example data</b>" : ""}</span></header>`;
+}
+
+function sec(n, title, body, extra) {
+  return `<section class="sec"><h2><span>${n}</span>${title}${extra || ""}</h2><div>${body}</div></section>`;
 }
 
 function decision(q, pal) {
@@ -204,237 +252,314 @@ function decision(q, pal) {
   return `${name} had the most of its limit left (${esc(q.note)}) of the plans allowed this job's data.`;
 }
 
-function status(s, now, pal) {
-  const run = s.running, qById = Object.fromEntries(s.queue.map(q => [String(q.task_id), q]));
-  let left = "";
+// 01 Now, first column: what is running, or the headline when nothing is
+function running(s, now, pal) {
+  const run = s.running;
   if (s.level === "running" && run) {
     const p = pal[run.pool] || { text: "inherit", label: run.pool };
     const pool = s.pools.find(x => x.id === run.pool);
-    left = `<p class="big">Running #${esc(run.task_id)} on <span style="color:${p.text}">${esc(p.label)}</span></p>
-      <p class="sub">${esc(run.name)}. <span class="dim">Started ${hhmm(D(run.started_at))}, ${span(run.seconds)} so far.${pool && pool.left != null ? ` ${esc(p.label)} read ${esc(pool.left_text)} left before it started.` : ""}</span></p>
-      ${qById[String(run.task_id)] ? `<p class="why-line">Picked ${decision(qById[String(run.task_id)], pal)}</p>` : ""}`;
-  } else if (s.level === "attention") {
-    left = `<p class="big">Needs attention</p>`;
-  } else {
-    left = `<p class="big">${esc(s.headline)}</p>`;
+    const q = s.queue.find(x => String(x.task_id) === String(run.task_id));
+    const why = q && q.pool ? decision(q, pal) : pool && pool.left != null ? `${esc(p.label)} read ${esc(pool.left_text)} left before it started.` : "";
+    return `<p class="label">Running for ${span(run.seconds)}${run.started_at ? ` · started ${hhmm(D(run.started_at))}` : ""}</p>
+      <h1><b>#${esc(run.task_id)}</b> on <b style="color:${p.text}">${esc(p.label)}</b>${run.name ? `: ${esc(run.name)}` : ""}</h1>
+      ${why ? `<p class="dim">${why}</p>` : ""}`;
   }
-  if (s.issues.length) left += `<ul class="issues">${s.issues.map(i => `<li>${esc(i)}</li>`).join("")}</ul>`;
-  if (s.errors.length) left += `<ul class="issues">${s.errors.map(i => `<li class="err">${esc(i)}</li>`).join("")}</ul>`;
-  return `<section class="band status"><div>${left}</div><div class="side next">${nextRun(s, now)}</div></section>`;
+  const last = (s.history || {}).last;
+  let out = `<p class="label">Nothing running</p><h1>${esc(s.headline)}</h1>`;
+  if (last) {
+    const p = last.pool ? pal[last.pool] : null;
+    out += `<p class="dim">Last job #${esc(last.task_id)}${last.name ? `, ${esc(last.name)}` : ""}: ${esc((RESULT[last.status] || last.status || "").toLowerCase())}${p ? ` on ${esc(p.label)}` : ""}, ${when(D(last.at), now)}.</p>`;
+  }
+  return out;
 }
 
+function check(ok, text) { return `<li class="${ok ? "" : "no"}"><span>${text}</span></li>`; }
+function readingsCheck(s) {
+  if (!s.pools.length) return "";
+  const usable = s.pools.filter(p => !p.flags.length).length;
+  return check(usable === s.pools.length, `${usable} of ${s.pools.length} plans have a usable reading`);
+}
+
+// 01 Now, second column: countdown to the next scheduled run and its pre-run checks
 function nextRun(s, now) {
   const sch = s.schedule, plan = s.plan;
+  const runnable = s.queue.filter(q => !q.skip).length;
+  const preview = `<p class="cmd">${plural(runnable, "job")} would run if you previewed now. To review: <span class="mono">allo-router run</span></p>`;
   if (!sch || !sch.next_run) {
-    return `<p class="clock">No schedule</p><p>Nothing starts on its own. Jobs run when you run a reviewed plan:</p>
-      <p class="cmd"><code>allo-router run --plan plan.json --execute</code></p>`;
+    return `<p class="label">Next scheduled run</p><p class="count">None</p>
+      <p>Nothing starts on its own. Jobs run when you run a reviewed plan: <span class="mono">allo-router run --plan plan.json --execute</span></p>
+      ${preview}<ul class="checks" aria-label="Checks">${readingsCheck(s)}</ul>`;
   }
   const n = D(sch.next_run);
-  const runnable = s.queue.filter(q => !q.skip).length;
-  let out = `<p class="clock">${hhmm(n)}</p><p class="when">Scheduled run, in ${span((n - now) / 1000)}</p>`;
+  let out = `<p class="label">Next scheduled run · ${hhmm(n)} ${dayName(n)}</p><p class="count">${hm((n - now) / 1000)}<small>h:min to go</small></p>`;
+  const checks = [];
   if (!plan) {
     out += `<p class="bad">No saved plan. The run will refuse.</p>`;
   } else if (plan.error) {
     out += `<p class="bad">plan.json cannot be used: ${esc(plan.error)}</p>`;
   } else {
-    const rv = D(plan.reviewed_at);
-    out += `<p>Reviewed ${when(rv, now)}, ${plan.runnable} job${plan.runnable === 1 ? "" : "s"} to run.${plan.refreshed ? ` Re-checked on fresh readings ${when(D(plan.created_at), now)}.` : ""}</p>`;
-    if (sch.refreshes) {
-      out += `<p class="${plan.ready_for_next_run ? "ok-text" : "bad"}">${plan.ready_for_next_run
-        ? "Just before the run, it is re-checked on fresh readings. It runs only if every job still comes out as reviewed."
-        : "The review will be too old by then. Review a new plan before the run."}</p>`;
-    } else {
-      out += `<p class="${plan.ready_for_next_run ? "ok-text" : "bad"}">${plan.ready_for_next_run
-        ? `Good until ${when(D(plan.expires_at), now)}. The run refuses if a reading or job changes first.`
-        : `It expires ${when(D(plan.expires_at), now)}, before the run, so the run will refuse it.`}</p>`;
+    let t = `${plural(plan.runnable, "job")}, reviewed ${when(D(plan.reviewed_at), now)}.`;
+    if (plan.refreshed) t += ` Re-checked on fresh readings ${when(D(plan.created_at), now)}.`;
+    if (plan.ready_for_next_run) {
+      t += sch.refreshes ? " Re-checked on fresh readings just before it starts; it runs only if every job still lands where you reviewed it."
+                         : ` Good until ${when(D(plan.expires_at), now)}. The run refuses if a reading or job changes first.`;
     }
+    out += `<p>${t}</p>`;
+    if (!plan.ready_for_next_run) {
+      out += `<p class="bad">${sch.refreshes ? "The review will be too old by then. Review a new plan before the run."
+                                             : `It expires ${when(D(plan.expires_at), now)}, before the run, so the run will refuse it.`}</p>`;
+    }
+    if (plan.check) checks.push(check(plan.check.ok, plan.check.ok ? "Plan still matches the readings" : `Plan no longer matches: ${esc(plan.check.text)}`));
   }
-  out += `<p class="cmd">${runnable} job${runnable === 1 ? "" : "s"} would run if you previewed now. To review: <code>allo-router run</code></p>`;
+  if (!plan || plan.error || runnable !== plan.runnable) out += preview;
   const a = sch.agents.find(x => x.label === sch.runner);
   if (a && a.status) {
     const st = a.status;
-    const txt = st.loaded === false ? "not loaded" : st.loaded == null ? (st.note || "status unknown")
-      : `loaded, ${st.runs === "0" ? "has not run yet" : `ran ${st.runs} time${st.runs === "1" ? "" : "s"}, last exit ${st.last_exit}`}`;
-    out += `<p class="cmd">launchd ${esc(a.label)}: ${esc(txt)}</p>`;
+    const txt = st.loaded === false ? "not loaded, so it will not run" : st.loaded == null ? (st.note || "status unknown")
+      : `loaded · ${st.runs === "0" ? "has not run yet" : `ran ${st.runs} time${st.runs === "1" ? "" : "s"}${st.last_exit != null ? `, last exit ${st.last_exit}` : ""}`}`;
+    checks.push(check(st.loaded !== false, `launchd ${esc(a.label)} ${esc(txt)}`));
+  }
+  checks.push(readingsCheck(s));
+  return out + `<ul class="checks" aria-label="Pre-run checks">${checks.join("")}</ul>`;
+}
+
+// 01 Now, third column: what needs a person. A plan without a usable reading gets its own line and the fix.
+function needsYou(s) {
+  const flagged = s.pools.filter(p => p.flags.length);
+  const other = s.issues.filter(i => !flagged.some(p => i.startsWith(p.label + ": ")));
+  let out = `<p class="label">Needs you</p>`;
+  const fix = `It is left out of every plan until you run <span class="mono">allo-router sync</span> or <span class="mono">set</span>.`;
+  flagged.forEach((p, i) => {
+    const head = p.left == null ? `${esc(p.label)} has no reading.` : `${esc(p.label)}: ${esc(p.flags.join(", ").toLowerCase())} reading.`;
+    out += `<h3${i ? ' class="more"' : ""}>${head}</h3><p>${fix}</p>`;
+  });
+  for (const i of other) out += `<p class="issue">${esc(i)}</p>`;
+  for (const e of s.errors) out += `<p class="issue err">${esc(e)}</p>`;
+  if (!flagged.length && !other.length && !s.errors.length) {
+    out += `<h3 class="ok">Nothing.</h3><p class="dim">No warnings from the plans, the schedule or the last job.</p>`;
   }
   return out;
 }
 
-function yard(s, now, pal) {
-  const W = 1328, X0 = 250, NOW = 430, END = 1270;
+function now01(s, now, pal) {
+  return `<div class="now"><div>${running(s, now, pal)}</div><div>${nextRun(s, now)}</div><div class="warn">${needsYou(s)}</div></div>`;
+}
+
+// 02 Plans: a ledger row per plan
+function onPlan(s, id) {
+  const run = s.running && s.running.alive && s.running.pool === id ? s.running : null;
+  const ids = s.queue.filter(q => !q.skip && q.pool === id && !(run && String(q.task_id) === String(run.task_id))).map(q => q.task_id);
+  return { run, ids };
+}
+function ledger(s, now, pal) {
+  if (!s.pools.length) return `<p class="empty">No plans yet. Add them to pools.json with <span class="mono">allo-router init</span>.</p>`;
+  const paced = s.pools.map(pace).filter(x => x != null);
+  const tight = paced.length > 1 ? Math.max(...paced) : null;
+  const rows = s.pools.map(p => {
+    const c = pal[p.id], flagged = p.flags.length > 0, credit = p.kind === "credit_usd";
+    let left;
+    if (p.left == null) left = "?";
+    else if (credit) left = esc(p.left_text);
+    else left = `${esc(String(p.left_text).replace(/%$/, ""))}<small>%</small>`;
+    let bar, note;
+    if (flagged) {
+      bar = `<div class="bar none"></div>`;
+      note = `<div class="bar-note bad">${p.left == null ? "No reading" : esc(cap(p.flags.join(", ").toLowerCase()))}. Not routed.</div>`;
+    } else if (credit) {
+      const read = p.updated_at ? `Last read ${ago(D(p.updated_at), now)}, ${p.sync || (p.source || "").startsWith("sync") ? "by sync" : "by hand"}.` : "Never read.";
+      bar = `<div class="bar line" style="background:${c.line}"></div>`;
+      note = `<div class="bar-note">Dollars with no weekly cap, so no bar. ${read}</div>`;
+    } else {
+      const x = pace(p);
+      bar = `<div class="bar"><i style="width:${Math.max(0, Math.min(100, p.left || 0))}%;background:${c.line}"></i></div>`;
+      note = x != null ? `<div class="bar-note">Use ${paceText(x)} pts an hour to finish it by reset.${x === tight ? ` Tightest of the ${WORDS[paced.length] || paced.length}.` : ""}</div>` : "";
+    }
+    const r = D(p.resets_at);
+    const resets = !r ? `<b>No reset time</b>` : r <= now ? `<b class="bad">Reset passed</b><span class="dim">read again</span>`
+                      : `<b>${resetText(r, now)}</b><span class="dim">${inSpan(r - now)}</span>`;
+    const { run, ids } = onPlan(s, p.id);
+    const shown = ids.slice(0, 8).map(esc).join(" ") + (ids.length > 8 ? ` +${ids.length - 8}` : "");
+    const jobs = run || ids.length ? `${run ? `<span class="run">${esc(run.task_id)}</span> ` : ""}${shown}` : `<span class="dim">none</span>`;
+    return `<tr><td class="plan${flagged ? " dim" : ""}"><span class="key" style="background:${flagged ? "var(--none)" : c.line}"></span>${esc(p.label)}</td>
+      <td class="left fig${flagged ? " dim" : ""}">${left}</td><td class="runway">${bar}${note}</td>
+      <td class="resets">${resets}</td><td class="ids">${jobs}</td></tr>`;
+  }).join("");
+  return `<table class="ledger"><thead><tr><th scope="col">Plan</th><th scope="col" class="r">Left</th><th scope="col">Runway to reset</th><th scope="col">Resets</th><th scope="col">Jobs on it</th></tr></thead><tbody>${rows}</tbody></table>`;
+}
+
+// 02 Plans, fold-out: each plan as a track running to its reset, with its jobs as numbered chips.
+let diagramOpen = false;
+try { diagramOpen = localStorage.getItem("allo.diagram") === "open"; } catch (e) {}
+
+function diagram(s, now, pal) {
   const pools = s.pools;
-  const rows = pools.length || 1, PITCH = 66, TOP = 92;
-  const H = TOP + rows * PITCH + 34;
+  if (!pools.length) return "";
+  const W = 1020, NOW = 170, END = 975, TOP = 50, PITCH = 60;
+  const yb = TOP + (pools.length - 1) * PITCH + 32, H = yb + 26;
   // The axis spans the subscriptions' resets (up to a week); credit that resets later gets an arrow instead.
-  const hours = pools.filter(p => p.kind !== "credit_usd").map(p => p.hours_to_reset).filter(h => h != null && h <= 168);
+  const hours = pools.filter(p => p.kind !== "credit_usd").map(p => p.hours_to_reset).filter(h => h != null && h > 0 && h <= 168);
   const horizon = Math.max(48, ...hours) * 1.06;
   const pxh = (END - NOW) / horizon;
   const xAt = d => NOW + (d - now) / 3600000 * pxh;
-  const yIn = TOP + (rows - 1) * PITCH / 2 + 8;
-  let g = "";
-  // time axis: midnights and 6-hour ticks along the bottom
-  const base = new Date(now); base.setMinutes(0, 0, 0);
-  for (let t = new Date(base); xAt(t) <= END + 40; t = new Date(t.getTime() + 3600000)) {
-    const x = xAt(t); if (x <= NOW + 2) continue;
-    if (t.getHours() === 0) {
-      g += `<line x1="${x}" y1="${TOP - 30}" x2="${x}" y2="${H - 20}" stroke="var(--rule)"/>
-            <text x="${x + 5}" y="${H - 6}" class="ax">${dayName(t)} ${mdy(t)}</text>`;
-    } else if (t.getHours() % 6 === 0) {
-      g += `<line x1="${x}" y1="${H - 24}" x2="${x}" y2="${H - 18}" stroke="var(--muted)"/>`;
-    }
+  let g = `<g stroke="var(--rule)">`, ax = `<g class="d-ax">`;
+  const mid = new Date(now); mid.setHours(24, 0, 0, 0);
+  for (let t = mid; xAt(t) <= END; t = new Date(t.getFullYear(), t.getMonth(), t.getDate() + 1)) {
+    const x = xAt(t).toFixed(1);
+    g += `<line x1="${x}" y1="22" x2="${x}" y2="${yb}"/>`;
+    ax += `<text x="${(+x + 5).toFixed(1)}" y="${yb + 20}">${dayName(t)} ${mdy(t)}</text>`;
   }
-  g += `<line x1="${NOW}" y1="${TOP - 74}" x2="${NOW}" y2="${H - 20}" stroke="var(--ink)" stroke-width="1.5"/>
-        <text x="${NOW + 6}" y="${TOP - 60}" class="ax-now">Now, ${dayName(now)} ${hhmm(now)}</text>`;
+  g += `</g>${ax}</g>`;
+  g += `<line x1="${NOW}" y1="14" x2="${NOW}" y2="${yb + 2}" stroke="var(--ink)" stroke-width="1.5"/>
+        <text x="${NOW}" y="10" class="d-ax" text-anchor="middle" style="fill:var(--ink);font-weight:700">Now</text>`;
   const sch = s.schedule, nxt = sch && sch.next_run ? D(sch.next_run) : null;
   let xNext = null;
   if (nxt && xAt(nxt) < END) {
     xNext = xAt(nxt);
-    g += `<line x1="${xNext}" y1="${TOP - 52}" x2="${xNext}" y2="${H - 20}" stroke="var(--ink)" stroke-width="1.5" stroke-dasharray="3 4"/>
-          <text x="${xNext + 6}" y="${TOP - 40}" class="ax" style="fill:var(--ink)">${hhmm(nxt)} run</text>`;
+    g += `<line x1="${xNext.toFixed(1)}" y1="22" x2="${xNext.toFixed(1)}" y2="${yb + 2}" stroke="var(--ink)" stroke-dasharray="2 3"/>
+          <text x="${(xNext + 4).toFixed(1)}" y="32" class="d-ax">${hhmm(nxt)} run</text>`;
   }
-  // incoming track, junction, branches
-  g += `<path d="M0 ${yIn} H${X0}" stroke="var(--ink)" stroke-width="10" fill="none"/>`;
-  const queued = s.queue.filter(q => !q.skip && q.pool);
-  const stuck = s.queue.filter(q => !q.pool);
+  const x0 = (xNext != null ? xNext : NOW + 30) + 8;
   pools.forEach((p, i) => {
-    const y = TOP + i * PITCH + 8, c = pal[p.id], flagged = p.flags.length > 0;
-    const stroke = flagged ? "var(--none)" : c.line;
-    const dash = flagged ? ' stroke-dasharray="10 7"' : "";
-    const dy = y - yIn, bend = Math.min(Math.abs(dy), 60) * Math.sign(dy);
-    g += `<path d="M${X0} ${yIn} H${X0 + 14} C${X0 + 60} ${yIn} ${X0 + 60} ${y} ${X0 + 110 + Math.abs(bend) * 0} ${y} H${NOW}" stroke="${stroke}" stroke-width="12" fill="none"${dash}/>`;
-    const reset = D(p.resets_at);
-    const beyond = !reset || reset - now <= 0 || xAt(reset) > END;
-    const xr = beyond ? END + 40 : Math.max(NOW + 20, xAt(reset));
-    g += `<path d="M${NOW} ${y} H${xr}" stroke="${stroke}" stroke-width="14" fill="none"${dash}/>`;
-    if (!beyond) {
-      g += `<rect x="${xr}" y="${y - 20}" width="6" height="40" fill="var(--stop)"/><rect x="${xr}" y="${y - 3}" width="14" height="6" fill="var(--stop)"/>`;
-    } else if (reset && reset - now > 0) {
-      g += `<path d="M${END + 40} ${y - 10} l12 10 l-12 10 z" fill="${stroke}"/>`;
+    const y = TOP + i * PITCH, c = pal[p.id], flagged = p.flags.length > 0;
+    const stroke = flagged ? "var(--none)" : c.line, dash = flagged ? ' stroke-dasharray="9 7"' : "";
+    const name = p.label.length > 20 ? p.label.slice(0, 19) + "…" : p.label;
+    g += `<text x="0" y="${y + 5}"><title>${esc(p.label)}</title><tspan class="d-nm"${flagged ? ' style="fill:var(--muted)"' : ""}>${esc(name)}</tspan><tspan class="d-v" dx="6">${esc(p.left_text)}</tspan></text>`;
+    const r = D(p.resets_at);
+    const passed = r && r <= now, beyond = r && !passed && xAt(r) > END;
+    let limit = END;
+    if (!r || passed) {
+      const xe = passed ? NOW + 24 : END;
+      g += `<line x1="${NOW}" y1="${y}" x2="${xe}" y2="${y}" stroke="${stroke}" stroke-width="7"${dash}/>`;
+      g += `<text x="${passed ? xe + 10 : END}" y="${passed ? y + 4 : y - 15}" class="d-rs"${passed ? "" : ' text-anchor="end"'}>${passed ? "reset passed, read again" : "no reset time"}</text>`;
+      if (passed) limit = NOW + 24;
+    } else if (beyond) {
+      g += `<line x1="${NOW}" y1="${y}" x2="${END + 21}" y2="${y}" stroke="${stroke}" stroke-width="7"${dash}/>
+            <path d="M${END + 19} ${y - 9} l13 9 l-13 9 z" fill="${stroke}"/>
+            <text x="${END - 15}" y="${y - 15}" class="d-rs" text-anchor="end">resets ${mdy(r)}</text>`;
+    } else {
+      const xr = Math.max(NOW + 20, xAt(r)), rs = `resets ${dayName(r)} ${hhmm(r)}`;
+      const fits = xr + 15 + rs.length * 6.6 < W;
+      g += `<line x1="${NOW}" y1="${y}" x2="${xr.toFixed(1)}" y2="${y}" stroke="${stroke}" stroke-width="7"${dash}/>
+            <path d="M${xr.toFixed(1)} ${y - 11} v22 M${xr.toFixed(1)} ${y} h9" stroke="var(--red)" stroke-width="2.5" fill="none"/>
+            <text x="${(fits ? xr + 15 : xr - 8).toFixed(1)}" y="${fits ? y + 4 : y - 15}" class="d-rs"${fits ? "" : ' text-anchor="end"'}>${rs}</text>`;
+      limit = xr;
     }
-    const left = p.left == null ? "no reading" : `${p.left_text} left`;
-    g += `<text x="${NOW + 10}" y="${y - 14}" class="nm">${esc(p.label)}<tspan class="lf" dx="10">${esc(left)}</tspan></text>`;
-    const rs = !reset ? "no reset time" : reset - now <= 0 ? "reset passed, read again" : `resets ${xAt(reset) > END ? mdy(reset) : `${dayName(reset)} ${hhmm(reset)}`}`;
-    // Reset label ends at its stop, unless the line is too short to hold it next to the name; then it goes past the stop.
-    const nameW = (p.label.length + left.length) * 8.2 + 24, rsW = rs.length * 7.4;
-    const tight = !beyond && NOW + 10 + nameW > xr - 8 - rsW;
-    const rx = beyond ? END + 52 : tight ? xr + 22 : xr - 8;
-    g += `<text x="${rx}" y="${tight ? y + 5 : y - 14}" text-anchor="${tight ? "start" : "end"}" class="rs">${esc(rs)}</text>`;
-    if (flagged) {
-      g += `<text x="${NOW + 10}" y="${y + 26}" class="pace">${esc(p.flags.join(", "))}. Not routed until you sync or set a reading.</text>`;
-    } else if (p.kind !== "credit_usd" && p.hours_to_reset && p.left != null) {
-      const pace = p.left / p.hours_to_reset;
-      g += `<text x="${tight ? NOW + 10 : rx}" y="${y + 26}" text-anchor="${tight ? "start" : "end"}" class="pace">${pace.toFixed(pace < 1 ? 2 : 1)} pts an hour uses it all by reset</text>`;
+    const x = pace(p);
+    if (flagged) g += `<text x="${x0}" y="${y + 28}" class="d-sub">Not routed until it has a reading</text>`;
+    else if (x != null) g += `<text x="${x0}" y="${y + 28}" class="d-sub">${paceText(x)} pts an hour uses it all by reset</text>`;
+    // jobs: running chip on Now, queued chips in run order after the next-run line (not to time scale)
+    const { run, ids } = onPlan(s, p.id);
+    if (run) g += chip(NOW - 19, y, 38, run.task_id, run.name, true);
+    let cx = x0, hidden = 0;
+    for (const id of ids) {
+      const w = Math.max(32, 12 + String(id).length * 7.5);
+      if (cx + w > limit - 4) { hidden++; continue; }
+      const q = s.queue.find(q => String(q.task_id) === String(id));
+      g += chip(cx, y, w, id, q && q.name, false);
+      cx += w + 6;
     }
-    // cars: running solid in the plan colour at Now; queued outlined after the next-run marker, in queue order
-    let x = (xNext || NOW + 40) + 8;
-    const run = s.running && s.running.alive && s.running.pool === p.id ? s.running : null;
-    if (run) g += car(NOW - 36, y, run.task_id, "s", c.line, run.name);
-    for (const q of queued.filter(q => q.pool === p.id && !(run && String(q.task_id) === String(run.task_id)))) {
-      if (x > (beyond ? END : xr) - 40) break;
-      g += car(x, y, q.task_id, "q", null, q.name); x += Math.max(38, Math.min(120, 8 + shortJob(q.name, q.task_id).replace(/&[^;]+;/g, " ").length * 7 + 8));
-    }
+    if (hidden) g += `<text x="${cx + 2}" y="${y + 4}" class="d-ax">+${hidden} more</text>`;
   });
-  let cx = 14;
-  for (const q of stuck.slice(0, 5)) { g += car(cx, yIn, q.task_id, "x", null, q.name); cx += Math.max(38, Math.min(120, 8 + shortJob(q.name, q.task_id).replace(/&[^;]+;/g, " ").length * 7 + 8)); }
-  g += `<circle cx="${X0}" cy="${yIn}" r="13" fill="var(--paper)" stroke="var(--ink)" stroke-width="4"/>
-        <text x="0" y="${yIn + 30}" class="ax">tasks.json, ${s.queue.length} job${s.queue.length === 1 ? "" : "s"}${stuck.length ? `, ${stuck.length} no plan fits` : ""}</text>
-        <text x="${X0}" y="${yIn + 34}" text-anchor="middle" class="ax" style="fill:var(--ink);font-weight:700">allo-router</text>`;
-  const desc = pools.map(p => `${p.label}: ${p.left == null ? "no reading" : p.left_text + " left"}, ${p.resets_at ? "resets " + D(p.resets_at).toLocaleString() : "no reset time"}`).join("; ");
-  return `<section class="yard"><svg viewBox="0 0 ${W + 70} ${H}" role="img" aria-labelledby="yt yd"><title id="yt">Plans on a shared time axis, each ending at its reset</title><desc id="yd">${esc(desc)}</desc>${g}</svg>
-    <div class="legend">
-      <span><svg width="30" height="16"><rect x="1" y="1" width="28" height="14" fill="var(--ink)"/></svg>Running</span>
-      <span><svg width="30" height="16"><rect x="1" y="1" width="28" height="14" fill="var(--paper)" stroke="var(--ink)" stroke-width="1.5"/></svg>Would run next, in queue order (not to time scale)</span>
-      <span><svg width="30" height="16"><rect x="1" y="1" width="28" height="14" fill="var(--paper)" stroke="var(--reset-text)" stroke-width="1.5" stroke-dasharray="3 2"/></svg>No plan fits</span>
-      <span><svg width="16" height="20"><rect x="2" y="0" width="5" height="20" fill="var(--stop)"/><rect x="2" y="8" width="12" height="5" fill="var(--stop)"/></svg>Reset</span>
-      <span><svg width="30" height="10"><path d="M0 5 H30" stroke="var(--none)" stroke-width="6" stroke-dasharray="8 5"/></svg>No usable reading</span>
-    </div></section>`;
+  const desc = pools.map(p => `${p.label} ${p.left == null ? "no reading" : p.left_text + " left"}, ${p.resets_at ? "resets " + resetText(D(p.resets_at), now) : "no reset time"}`).join(". ");
+  const stuck = s.queue.filter(q => !q.pool);
+  return `<details class="diagram" id="diagram"${diagramOpen ? " open" : ""}>
+    <summary><b class="when-closed">Show</b><b class="when-open">Hide</b> route diagram<span>each plan as a track running to its reset</span></summary>
+    <div class="scroll"><svg viewBox="0 0 ${W + 12} ${H}" role="img" aria-label="${esc(`Plans drawn as tracks to their reset times. ${desc}.`)}">${g}</svg></div>
+    ${stuck.length ? `<p class="d-stuck">No plan fits ${stuck.map(q => "#" + esc(q.task_id)).join(", ")}; see 03 Jobs.</p>` : ""}
+    <div class="d-legend">
+      <span><svg width="20" height="12"><rect width="20" height="12" fill="#16140F"/></svg>Running</span>
+      <span><svg width="20" height="12"><rect x="1" y="1" width="18" height="10" fill="none" stroke="#16140F" stroke-width="1.5"/></svg>Queued, in run order (not to time scale)</span>
+      <span><svg width="12" height="14"><path d="M3 1 v12 M3 7 h7" stroke="#B3200F" stroke-width="2.5"/></svg>Reset</span>
+      <span><svg width="26" height="8"><line x1="0" y1="4" x2="26" y2="4" stroke="#A8A194" stroke-width="5" stroke-dasharray="7 5"/></svg>No usable reading</span>
+    </div></details>`;
 }
-function shortJob(name, id) {
-  const raw = (name && String(name).trim()) || "";
-  const line = raw.split("\n")[0].trim();
-  if (!line) return `#${esc(id)}`;
-  return line.length > 18 ? esc(line.slice(0, 16)) + "…" : esc(line);
-}
-function car(x, y, id, kind, fill, name) {
-  const label = shortJob(name, id);
+function chip(x, y, w, id, name, running) {
   const tip = name ? `${esc(String(name))} (#${esc(id)})` : `#${esc(id)}`;
-  const w = Math.max(30, Math.min(120, 8 + label.replace(/&[^;]+;/g, " ").length * 7));
-  return `<g class="car-${kind}"><title>${tip}</title><rect x="${x}" y="${y - 8}" width="${w}" height="16"${fill ? ` style="fill:${fill}"` : ""}/><text x="${x + w / 2}" y="${y + 4}">${label}</text></g>`;
+  return `<g><title>${tip}</title><rect x="${x.toFixed(1)}" y="${y - 10}" width="${w}" height="20" fill="${running ? "var(--ink)" : "var(--paper)"}"${running ? "" : ' stroke="var(--ink)" stroke-width="1.5"'}/>` +
+    `<text x="${(x + w / 2).toFixed(1)}" y="${y + 4}" class="d-chip" fill="${running ? "var(--paper)" : "var(--ink)"}">${esc(id)}</text></g>`;
 }
 
-function jobRow(r, now, pal, cls) {
-  const p = r.pool ? pal[r.pool] : null;
-  const plan = p ? `<span class="seg" style="background:${p.line}"></span>${esc(p.label)}` : `<span class="dim">Not assigned</span>`;
-  let res = r.result || RESULT[r.status] || esc(r.status);
-  const resCls = r.status === "ok" ? "" : ["failed", "timeout", "error"].includes(r.status) || (r.misroute && r.misroute.length) ? "bad" : r.status === "running" ? "ok-text" : "dim";
-  let note = "";
-  if (r.status === "skipped" && r.reason) note = `<span class="note">${esc(r.reason)}</span>`;
-  else if (r.misroute && r.misroute.length && r.status !== "queued") note = `<span class="note">Misroute: ${esc(r.misroute.join("; "))}</span>`;
-  const used = r.plan_used_pts != null ? `${r.plan_used_pts} pts` : r.status === "running" ? "after it ends" : "";
-  return `<tr class="${cls || ""}"><td class="when">${r.whenText}</td><td class="job"><b>#${esc(r.task_id)}</b>${esc(r.name)}${note}</td>
-    <td class="plan">${plan}</td><td class="res ${resCls}">${res}</td><td class="num">${r.seconds != null ? clock(r.seconds) : ""}</td>
-    <td class="num"${r.plan_used_why ? ` title="${esc(r.plan_used_why)}"` : ""}>${used || '<span class="dim">–</span>'}</td>
-    <td class="num">${r.output_tokens != null ? tokens(r.output_tokens) : '<span class="dim">–</span>'}</td></tr>`;
-}
-
+// 03 Jobs: what would run next, in run order, and what already ran
 function jobs(s, now, pal) {
   const h = s.history || {};
   const sch = s.schedule, nxt = sch && sch.next_run ? D(sch.next_run) : null;
-  const rows = [];
-  if (s.running && s.running.alive) {
-    const r = s.running;
-    rows.push(jobRow({ task_id: r.task_id, name: r.name, pool: r.pool, status: "running", result: "Running", seconds: r.seconds, whenText: hhmm(D(r.started_at)) }, now, pal));
-  }
-  for (const q of s.queue.filter(q => !q.skip)) {
-    if (s.running && s.running.alive && String(q.task_id) === String(s.running.task_id)) continue;
-    rows.push(jobRow({ task_id: q.task_id, name: q.name, pool: q.pool, status: "queued", result: "Would run", whenText: nxt ? `Next ${hhmm(nxt)}` : "Next" }, now, pal, "queued"));
-  }
+  const run = s.running && s.running.alive ? s.running : null;
+  const planName = id => id && pal[id] ? esc(pal[id].label) : "None";
+  const queued = s.queue.filter(q => !q.skip && q.pool && !(run && String(q.task_id) === String(run.task_id)))
+    .map(q => `<tr><td class="id">${esc(q.task_id)}</td><td>${esc(q.name)}</td><td class="p">${planName(q.pool)}</td></tr>`);
   for (const q of s.queue.filter(q => !q.pool)) {
-    rows.push(jobRow({ task_id: q.task_id, name: q.name, pool: null, status: "skipped", result: "No plan fits", misroute: ["unassigned"], whenText: nxt ? `Next ${hhmm(nxt)}` : "Next" }, now, pal, "queued"));
+    queued.push(`<tr><td class="id">${esc(q.task_id)}</td><td>${esc(q.name)}<span class="note">${esc(q.note || "No plan may take this job's data")}</span></td><td class="p">None</td><td class="s bad">No plan fits</td></tr>`);
   }
-  let title = "Today's jobs", list = h.today || [];
-  if (!list.length && (h.recent || []).length) { title = "Recent jobs"; list = h.recent; }
-  for (const r of list) rows.push(jobRow({ ...r, whenText: when(D(r.at), now) }, now, pal));
-  const body = rows.length ? `<table><thead><tr><th scope="col">When</th><th scope="col">Job</th><th scope="col">Plan</th><th scope="col">Result</th>
-      <th scope="col" class="num">Took</th><th scope="col" class="num">Plan used</th><th scope="col" class="num">Tokens out</th></tr></thead><tbody>${rows.join("")}</tbody></table>`
-    : `<p class="empty">No jobs yet. Add them to tasks.json, then preview with <span class="mono">allo-router run</span>.</p>`;
-  return `<div><h2>${title}${list === h.recent ? ' <span class="dim">(nothing ran today)</span>' : ""}</h2>${body}</div>`;
+  const qHead = `<h3>${nxt ? `Queued for ${hhmm(nxt)}` : "Would run next"} <span class="dim">· in run order</span></h3>`;
+  const left = qHead + (queued.length ? `<table><tbody>${queued.join("")}</tbody></table>`
+    : `<p class="empty">Nothing queued. Add jobs to tasks.json, then preview with <span class="mono">allo-router run</span>.</p>`);
+  let title = "Ran today", sub = "newest first", list = h.today || [];
+  if (!list.length && (h.recent || []).length) { title = "Recent jobs"; sub = "nothing ran today"; list = h.recent; }
+  const ran = list.map(r => {
+    const p = r.pool ? pal[r.pool] : null, credit = p && p.pool.kind === "credit_usd";
+    const mis = r.misroute && r.misroute.length;
+    let res = RESULT[r.status] || esc(r.status), cls = "";
+    if (r.status === "ok") {
+      if (credit && r.cost_usd != null) res += ` · ${money(r.cost_usd)}`;
+      else if (r.plan_used_pts != null) res += ` · ${r.plan_used_pts} pts`;
+    } else if (["failed", "timeout", "error"].includes(r.status) || mis) cls = "bad";
+    else cls = "dim";
+    let note = "";
+    if (r.status === "skipped" && r.reason) note = cap(r.reason);
+    else if (r.status === "timeout") note = `Stopped at ${Math.round((r.seconds || 0) / 60)} min; counted as a misroute`;
+    else if (mis) note = `Misroute: ${r.misroute.join("; ")}`;
+    const tip = [r.seconds != null ? `Took ${clock(r.seconds)}` : "", r.output_tokens != null ? `${tokens(r.output_tokens)} tokens out` : "",
+                 r.plan_used_why || ""].filter(Boolean).join(" · ");
+    return `<tr${tip ? ` title="${esc(tip)}"` : ""}><td class="id">${esc(r.task_id)}</td><td>${esc(r.name)}${r.recurring ? ` <span class="dim">· ${esc(r.recurring)}</span>` : ""}${note ? `<span class="note">${esc(note)}</span>` : ""}</td>
+      <td class="p">${planName(r.pool)}</td><td class="s ${cls}">${res}</td></tr>`;
+  });
+  const right = `<h3>${title} <span class="dim">· ${sub}</span></h3>` + (ran.length ? `<table><tbody>${ran.join("")}</tbody></table>`
+    : `<p class="empty">Nothing has run yet. Jobs are logged by <span class="mono">allo-router run --plan plan.json --execute</span>.</p>`);
+  return `<div class="jobs"><div>${left}</div><div>${right}</div></div>`;
 }
 
+// 04 This week: counts, jobs per day, and the estimate of what the plans saved
 function week(s, now, pal) {
-  const h = s.history;
-  if (!h || !h.logged || !h.week) return `<div class="side"><h2>This week</h2><p class="empty">Nothing has run here yet. Jobs are logged by <span class="mono">allo-router run --plan plan.json --execute</span>.</p></div>`;
-  const w = h.week, since = new Date(w.since + "T00:00:00");
-  const stats = `<div class="stats"><div><b>${w.routed}</b><span>routed</span></div><div><b>${w.ok}</b><span>done</span></div>
-      <div><b>${w.skipped}</b><span>skipped</span></div><div class="${w.misroutes ? "alert" : ""}"><b>${w.misroutes}</b><span>misroutes</span></div></div>
-      <p class="defn">A misroute is a job that failed or timed out, ran on an unverified reading, or was skipped because no plan could take it.</p>`;
-  const units = w.days.map(d => {
-    const total = Object.values(d.by_pool).reduce((a, b) => a + b, 0);
-    let sq = "";
-    for (const [pid, n] of Object.entries(d.by_pool)) for (let i = 0; i < n; i++) sq += `<i style="background:${(pal[pid] || { line: "var(--none)" }).line}"></i>`;
-    const isToday = d.date === `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
-    return `<div class="day ${isToday ? "today" : ""} ${d.future ? "future" : ""}">${total ? `<span class="count">${total}</span>` : ""}<span class="sq">${sq}</span><span class="lbl">${d.label}</span></div>`;
-  }).join("");
+  const h = s.history, w = h && h.logged ? h.week : null;
+  if (!w) return `<p class="empty">Nothing has run here yet. Jobs are logged by <span class="mono">allo-router run --plan plan.json --execute</span>.</p>`;
+  const totals = w.days.map(d => Object.values(d.by_pool).reduce((a, b) => a + b, 0));
+  const top = Math.max(1, ...totals);
+  const today = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+  const days = w.days.map((d, i) => `<div class="${d.date === today ? "today" : ""}${d.future ? " future" : ""}" title="${esc(d.label)}: ${plural(totals[i], "job")}"><i style="height:${Math.round(totals[i] / top * 72)}px"></i><span>${esc(d.label[0])}</span></div>`).join("");
+  const stats = `<div class="week">
+      <div><span class="fig">${w.routed}</span><span class="dim">routed</span></div><div><span class="fig">${w.ok}</span><span class="dim">done</span></div>
+      <div><span class="fig">${w.skipped}</span><span class="dim">skipped</span></div>
+      <div class="${w.misroutes ? "alert" : ""}" title="A misroute is a job that failed or timed out, ran on an unverified reading, or was skipped because no plan could take it."><span class="fig">${w.misroutes}</span><span class="dim">misroutes</span></div>
+      <div><span class="dim" style="font-size:12px">Jobs per day</span><div class="days" aria-label="Jobs per day: ${esc(w.days.map((d, i) => `${d.label} ${totals[i]}`).join(", "))}">${days}</div></div>
+    </div>`;
   const used = w.measured.map(m => {
-    const p = pal[m.pool] || { line: "var(--none)", label: m.pool, pool: {} };
-    const credit = p.pool.kind === "credit_usd";
-    const v = credit ? money(m.cost_usd) : m.measured ? `${+m.pts.toFixed(2)} pts` : "n/a";
-    const n = credit ? `reported by the CLI on ${m.cost_n} of ${m.jobs} jobs` : `measured on ${m.measured} of ${m.jobs} jobs`;
-    return `<div class="row"><span><span class="seg" style="background:${p.line}"></span>${esc(p.label)}</span><span class="n">${n}</span><span class="v">${v}</span></div>`;
-  }).join("");
+    const p = pal[m.pool] || { label: m.pool, pool: {} };
+    if (p.pool.kind === "credit_usd") return `${esc(p.label)} ${money(m.cost_usd)}${m.cost_n < m.jobs ? ` on ${m.cost_n} of ${m.jobs} jobs` : ""}`;
+    if (!m.measured) return `${esc(p.label)} n/a`;
+    return `${esc(p.label)} ${+m.pts.toFixed(2)} pts${m.measured < m.jobs ? ` on ${m.measured} of ${m.jobs} jobs` : ""}`;
+  });
   const sv = h.saved;
-  const est = sv && sv.week_usd != null ? `<p class="est"><b>${money(sv.week_usd)} saved this week, estimated.</b> Each job that ran, priced at the API list price, minus what it cost on the plan it ran on (nothing extra on a subscription). ${sv.week_priced} job${sv.week_priced === 1 ? "" : "s"} priced. <span class="mono">allo-router report</span> shows the method.</p>` : "";
-  return `<div class="side"><h2>This week <span class="dim">since ${dayName(since)} ${mdy(since)}</span></h2>${stats}
-    <div class="units" aria-label="Jobs per day this week, one square per job, coloured by plan">${units}</div>
-    ${used ? `<h2 style="margin-top:16px">Plan used <span class="dim">measured from usage readings</span></h2><div class="used">${used}</div>` : ""}${est}</div>`;
+  const saved = sv && sv.week_usd != null ? `<div class="saved"><span class="fig">${money(sv.week_usd)}</span>
+      <p><b>Saved this week, estimated.</b> Each job that ran, priced at the API list price, minus what it cost on the plan it ran on (nothing extra on a subscription). ${plural(sv.week_priced, "job")} priced.${used.length ? ` Measured plan use: ${used.join(", ")}.` : ""} <span class="mono">allo-router report</span> shows the method.</p></div>`
+    : used.length ? `<div class="saved"><span></span><p>Measured plan use: ${used.join(", ")}.</p></div>` : "";
+  return stats + saved;
 }
 
 function render(s) {
   const now = D(s.now), pal = palette(s.pools);
   document.title = (s.example ? "Example data: " : "") + "Allo Router, " + s.headline;
-  document.getElementById("app").innerHTML = header(s, now, pal) + status(s, now, pal) + yard(s, now, pal)
-    + `<section class="band lower">${jobs(s, now, pal)}${week(s, now, pal)}</section>`
-    + `<footer>Read-only. Reads pools.json, tasks.json, plan.json and runs.jsonl in ${esc(s.config_dir)}, and asks launchd whether its agents are loaded. Never syncs, never starts a job. Refreshes every 15 seconds. allo-router ${esc(s.version)}${s.example ? ". Example data." : ""}</footer>`;
+  const since = s.history && s.history.week ? new Date(s.history.week.since + "T00:00:00") : null;
+  document.getElementById("app").innerHTML = mast(s, now)
+    + sec("01", "Now", now01(s, now, pal))
+    + sec("02", "Plans", ledger(s, now, pal) + diagram(s, now, pal))
+    + sec("03", "Jobs", jobs(s, now, pal))
+    + sec("04", "This week", week(s, now, pal), since ? `<span class="since dim">since ${dayName(since)} ${mdy(since)}</span>` : "")
+    + `<footer>Read-only. Reads pools.json, tasks.json, plan.json and runs.jsonl in ${esc(s.config_dir)}, and asks launchd whether its agents are loaded. Never syncs, never starts a job. Refreshes every 15 seconds. allo-router ${esc(s.version)}.${s.example ? " Example data: every plan, job and number on this page is made up. Run <span class=\"mono\">allo-router dashboard</span> without <span class=\"mono\">--example</span> to see your own." : ""}</footer>`;
+  const d = document.getElementById("diagram");
+  if (d) d.addEventListener("toggle", () => {
+    diagramOpen = d.open;
+    try { localStorage.setItem("allo.diagram", d.open ? "open" : "closed"); } catch (e) {}
+  });
 }
 
 async function load() {
