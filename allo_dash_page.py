@@ -126,6 +126,7 @@ PAGE = r"""<!DOCTYPE html>
   .jobs td { padding: 9px 12px 9px 0; vertical-align: baseline; }
   .jobs td.id { font-family: var(--mono); font-size: 12.5px; color: var(--muted); width: 36px; }
   .jobs td.p { white-space: nowrap; color: var(--muted); font-size: 13px; }
+  .jobs td.p.bad { color: var(--red); }
   .jobs td.s { white-space: nowrap; text-align: right; font-size: 13px; }
   .note { display: block; font-size: 12.5px; color: var(--muted); }
 
@@ -161,6 +162,7 @@ PAGE = r"""<!DOCTYPE html>
     .mast { grid-template-columns: 1fr auto; } .mast .date { display: none; } .mast .mark { white-space: nowrap; } .mast .right .mono, .mast .right .sync { display: none; }
     .now h1 { font-size: 32px; }
     .jobs td.p { display: none; }
+    .jobs td.p.bad { display: table-cell; text-align: right; }
     .saved { grid-template-columns: 1fr; gap: 8px; }
     .ledger thead { display: none; }
     .ledger tr { display: grid; grid-template-columns: 1fr auto; gap: 6px 12px; padding: 12px 0; border-bottom: 1px solid var(--rule); }
@@ -488,7 +490,7 @@ function jobs(s, now, pal) {
   const queued = s.queue.filter(q => !q.skip && q.pool && !(run && String(q.task_id) === String(run.task_id)))
     .map(q => `<tr><td class="id">${esc(q.task_id)}</td><td>${esc(q.name)}</td><td class="p">${planName(q.pool)}</td></tr>`);
   for (const q of s.queue.filter(q => !q.pool)) {
-    queued.push(`<tr><td class="id">${esc(q.task_id)}</td><td>${esc(q.name)}<span class="note">${esc(q.note || "No plan may take this job's data")}</span></td><td class="p">None</td><td class="s bad">No plan fits</td></tr>`);
+    queued.push(`<tr><td class="id">${esc(q.task_id)}</td><td>${esc(q.name)}<span class="note">${esc(q.note || "No plan may take this job's data")}</span></td><td class="p bad">No plan fits</td></tr>`);
   }
   const qHead = `<h3>${nxt ? `Queued for ${hhmm(nxt)}` : "Would run next"} <span class="dim">· in run order</span></h3>`;
   const left = qHead + (queued.length ? `<table><tbody>${queued.join("")}</tbody></table>`
