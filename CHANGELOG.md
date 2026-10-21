@@ -1,21 +1,14 @@
 # Changelog
 
+All notable changes to Allo Router. Dates are MM/DD/YYYY.
+
 ## Unreleased
-
-
-### Hosted dashboard: Grok Bot pool + live running jobs
-- **Grok Bot** appears as an orchestrator plan (provider `grok`, plan type `orchestrator`): job count only, no invented %. Fed from real Chief `run.log` dispatch events.
-- **Live heartbeats** from `com.chief.codex-*` launchd lanes and `runs/current.json`. Status `running` with `heartbeat_at`; the page polls every 3s, shows a Running now strip, pulsing chips, and elapsed timers.
-- New CLI: `allo-router live` / `allo-router live --watch` (see `allo_live.py`).
-
 
 ### Hosted dashboard: plan names and distinguishable jobs
 - Providers now resolve to **ChatGPT** (codex), **Claude Personal** (personal config dir), and **Claude Team** (default Claude), so the hosted page no longer shows "Other, pool 3" / "Claude, pool 1".
 - Uploads may include a short job `title` (from the task name, max 48 chars), plus `model` and `effort` parsed from the pool's run command. Timeline chips show the title (full text on hover); a Name / Model / Effort toggle colours chips accordingly.
 - Re-uploads upsert rows, so a corrected provider or title can replace an earlier "other" reading for the same hashed job id.
-- Local dashboard cars show the job short name (not only `#1`), and Eman's live `pools.json` labels are Claude Personal / Claude Team / ChatGPT.
-
-All notable changes to Allo Router. Dates are MM/DD/YYYY.
+- Local dashboard cars show the job short name (not only `#1`).
 
 ## 0.5.0 (10/14/2026)
 

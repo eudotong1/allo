@@ -1,18 +1,23 @@
 #!/usr/bin/env python3
-"""Allo Router live: upload running / finished events from real local lanes.
+"""Allo Router live: upload running / finished events from local job lanes. Off unless configured.
 
 Sources (all real, nothing invented):
-  - runs/current.json in a connected router folder (allo-router run --execute)
-  - ~/Shield/chief-inbox/codex-run/run.log (Chief / Grok Bot dispatch of com.chief.codex-* lanes)
-  - launchctl list for com.chief.codex-* (running Codex lane processes)
+  - runs/current.json in each router folder: --dir (repeatable), else ALLO_LIVE_DIRS (folders separated
+    by the OS path separator), else the current folder if it has a pools.json
+  - an optional lane log: --run-log FILE or ALLO_RUN_LOG. Lines look like
+      === 2026-10-15 09:00 start <lane> in <folder>
+      === 2026-10-15 09:20 end <lane> exit 0
+    with stamps in local time. No default: without one, no lane events are read.
+  - an optional launchd label prefix, ALLO_LANE_PREFIX (for example com.example.codex-): running jobs
+    whose label starts with it are heartbeated as running lanes. No default: launchctl is not read.
 
-Grok Bot is the orchestrator: each "start <lane>" in run.log is a Grok dispatch (provider=grok,
+Each "start <lane>" in the lane log is uploaded as an orchestrator dispatch (provider=grok,
 plan_type=orchestrator, no usage %). The matching Codex work is heartbeated on the ChatGPT pool
 while the launchd job is alive, then marked ok/failed on "end <lane>".
 
   allo-router live                  one shot: upload current running + new log events
   allo-router live --watch          poll every few seconds until Ctrl-C
-  allo-router live --watch --every 3
+  allo-router live --watch --every 3 --run-log ~/lanes/run.log
 """
 from __future__ import annotations
 
@@ -31,17 +36,8 @@ from pathlib import Path
 import allo
 import allo_upload as up
 
-RUN_LOG = Path.home() / "Shield/chief-inbox/codex-run/run.log"
-LANE_TITLES = {
-    "industry": "Industry pages",
-    "i18n": "i18n",
-    "sec": "Security audit",
-    "e2e": "E2E tests",
-    "docs": "Docs",
-    "yard": "Yard review",
-    "pages": "Pages",
-}
-CHIEF_RE = re.compile(r"^com\.chief\.codex-(.+)$")
+RUN_LOG = Path(os.environ["ALLO_RUN_LOG"]).expanduser() if os.environ.get("ALLO_RUN_LOG") else None
+LANE_PREFIX = os.environ.get("ALLO_LANE_PREFIX") or None
 LOG_RE = re.compile(
     r"^=== (\d{4}-\d{2}-\d{2} \d{2}:\d{2}) (start|end) (\S+)(?: in (.+)| exit (-?\d+))?\s*$"
 )
@@ -52,7 +48,7 @@ def utc_minute(dt: datetime) -> str:
 
 
 def parse_local(stamp: str) -> datetime:
-    # run.log is local Mac time (America/New_York on this machine)
+    # lane log stamps are in this computer's local time
     naive = datetime.strptime(stamp, "%Y-%m-%d %H:%M")
     local = datetime.now().astimezone().tzinfo
     return naive.replace(tzinfo=local).astimezone(timezone.utc)
@@ -192,9 +188,12 @@ def codex_run_info(lane_dir, started: datetime, ended: datetime, root: Path | No
     return (round(total, 4) if any_priced else None), model
 
 
-def launchctl_running() -> dict[str, int]:
-    """lane_name -> pid for com.chief.codex-* that are running."""
+def launchctl_running(prefix: str | None = None) -> dict[str, int]:
+    """lane_name -> pid for running launchd jobs whose label starts with prefix (ALLO_LANE_PREFIX). None: {}."""
     out = {}
+    prefix = prefix if prefix is not None else LANE_PREFIX
+    if not prefix:
+        return out
     try:
         p = subprocess.run(["launchctl", "list"], capture_output=True, text=True, timeout=5)
     except (OSError, subprocess.TimeoutExpired):
@@ -204,19 +203,18 @@ def launchctl_running() -> dict[str, int]:
         if len(parts) < 3:
             continue
         pid, _last, label = parts[0], parts[1], parts[2]
-        m = CHIEF_RE.match(label)
-        if not m or pid == "-":
+        if not label.startswith(prefix) or label == prefix or pid == "-":
             continue
         try:
-            out[m.group(1)] = int(pid)
+            out[label[len(prefix):]] = int(pid)
         except ValueError:
             continue
     return out
 
 
-def parse_run_log(path: Path):
-    """Yield dicts for start/end events from Chief's run.log."""
-    if not path.exists():
+def parse_run_log(path: Path | None):
+    """Yield dicts for start/end events from the lane log. None or a missing file: nothing."""
+    if path is None or not path.exists():
         return
     for line in path.read_text(errors="replace").splitlines():
         m = LOG_RE.match(line.strip())
@@ -243,12 +241,12 @@ def open_starts(events):
     return open_
 
 
-def build_live_jobs(state, now: datetime, router_dirs: list[Path], *, backfill: bool = False):
-    """Build upload rows. By default only *new* run.log events since the live cursor, plus
+def build_live_jobs(state, now: datetime, router_dirs: list[Path], *, backfill: bool = False, run_log: Path | None = None):
+    """Build upload rows. By default only *new* lane log events since the live cursor, plus
     whatever is running right now. Pass backfill=True once to import today's log history."""
     salt = state["salt"]
     jobs = []
-    events = list(parse_run_log(RUN_LOG))
+    events = list(parse_run_log(run_log if run_log is not None else RUN_LOG))
     running_lanes = launchctl_running()
     cursor = state.setdefault("live", {})
     last_seen = cursor.get("run_log_at")  # ISO minute UTC of last consumed event
@@ -280,8 +278,8 @@ def build_live_jobs(state, now: datetime, router_dirs: list[Path], *, backfill: 
         if not after_cursor(e) and not (start and after_cursor(start)):
             continue
         status = "ok" if (e["exit"] is None or e["exit"] == 0) else "failed"
-        title_g = f"Dispatch {LANE_TITLES.get(e['lane'], e['lane'])}"
-        title_c = LANE_TITLES.get(e["lane"], e["lane"])
+        title_g = f"Dispatch {e['lane']}"
+        title_c = e["lane"]
         value, real_model = codex_run_info((start or {}).get("dir"), started, e["at"],
                                 next_start=next_start.get(id(start)) if start else None)
         jobs.append(job_row(
@@ -303,8 +301,8 @@ def build_live_jobs(state, now: datetime, router_dirs: list[Path], *, backfill: 
     for lane, pid in running_lanes.items():
         start = open_.get(lane)
         started = start["at"] if start else now
-        title_g = f"Dispatch {LANE_TITLES.get(lane, lane)}"
-        title_c = LANE_TITLES.get(lane, lane)
+        title_g = f"Dispatch {lane}"
+        title_c = lane
         jobs.append(job_row(
             id=hid(salt, ["grok-dispatch", lane, utc_minute(started)]),
             at=utc_minute(started), pool=pool_ref(state, "grok_bot"), plan_type="orchestrator",
@@ -395,7 +393,7 @@ def remember_sent(jobs, state):
             del seen[k]
 
 
-# ---------- Suggested next and "Send to Grok Bot" ----------
+# ---------- Suggested next and run requests from the dashboard ----------
 
 def build_queue(state, router_dirs, now):
     """(queue rows, {queue id: (folder, task id)}). The planner's runnable jobs: title and suggested plan only.
@@ -549,23 +547,23 @@ def send(jobs, state, now, transport=up.http, queue=None):
     return len(jobs)
 
 
-def default_router_dirs():
-    out = []
-    for p in (
-        Path.home() / "Shield/Projects/allo-hosted",
-        Path.home() / "Shield/chief-inbox/allo-dogfood",
-    ):
-        if (p / "pools.json").exists():
-            out.append(p)
-    return out
+def default_router_dirs(here: Path | None = None):
+    """Router folders from ALLO_LIVE_DIRS, else `here` (default: the current folder) if it has a pools.json."""
+    env = os.environ.get("ALLO_LIVE_DIRS")
+    if env:
+        candidates = [Path(p).expanduser() for p in env.split(os.pathsep) if p]
+    else:
+        candidates = [here or Path(".")]
+    return [p for p in candidates if (p / "pools.json").exists()]
 
 
-def cmd_live(argv, now=None, transport=up.http, out=print, spawn=None):
-    ap = argparse.ArgumentParser(prog="allo-router live", description="Upload live lane / Grok dispatch events")
+def cmd_live(argv, now=None, transport=up.http, out=print, spawn=None, here: Path | None = None):
+    ap = argparse.ArgumentParser(prog="allo-router live", description="Upload live job and lane events")
     ap.add_argument("--watch", action="store_true", help="poll until interrupted")
     ap.add_argument("--every", type=float, default=4.0, help="seconds between polls in --watch (default 4)")
     ap.add_argument("--dir", action="append", default=[], help="router folder with runs/current.json (repeatable)")
-    ap.add_argument("--backfill", action="store_true", help="import all events in run.log once (not only new)")
+    ap.add_argument("--run-log", help="lane log to read start/end events from (default: $ALLO_RUN_LOG; none if unset)")
+    ap.add_argument("--backfill", action="store_true", help="import all events in the lane log once (not only new)")
     ap.add_argument("--run-request", nargs=4, metavar=("FOLDER", "TASK_ID", "REQUEST_ID", "POOL"), help=argparse.SUPPRESS)
     a = ap.parse_args(argv)
     if a.run_request:
@@ -574,12 +572,13 @@ def cmd_live(argv, now=None, transport=up.http, out=print, spawn=None):
     if not state:
         out("Not connected. Run allo-router connect first.")
         return 1
-    dirs = [Path(d) for d in a.dir] or default_router_dirs()
+    dirs = [Path(d) for d in a.dir] or default_router_dirs(here)
+    run_log = Path(a.run_log).expanduser() if a.run_log else None
 
     def once():
         n = datetime.now(timezone.utc) if now is None else now
         before = json.loads(json.dumps(state.get("live") or {}))
-        jobs = build_live_jobs(state, n, dirs, backfill=a.backfill)
+        jobs = build_live_jobs(state, n, dirs, backfill=a.backfill, run_log=run_log)
         running = sum(1 for j in jobs if j["status"] == "running")
         queue, where = build_queue(state, dirs, n)
         changed, fp = queue_changed(queue, state)

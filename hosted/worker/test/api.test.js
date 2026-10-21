@@ -353,7 +353,7 @@ describe("summarize", () => {
   it("names computers computer-1, computer-2 and ignores user-typed names", async () => {
     const { cookie } = await devSignIn("namer");
     const names = [];
-    for (const typed of ["Eman's MacBook", "<b>x</b>"]) {
+    for (const typed of ["Sam's MacBook", "<b>x</b>"]) {
       const dev = await (await call("/v1/device", { method: "POST", body: {}, origin: null })).json();
       const r = await call("/v1/device/approve", { method: "POST", cookie, body: { user_code: dev.user_code, name: typed } });
       expect(r.status).toBe(200);
