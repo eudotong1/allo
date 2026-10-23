@@ -1,5 +1,7 @@
 # Allo Router
 
+[![tests](https://github.com/eudotong1/allo/actions/workflows/tests.yml/badge.svg)](https://github.com/eudotong1/allo/actions/workflows/tests.yml) [![MIT license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 The agent router for maximizing usage. Site: https://allorouter.com
 
 You pay for several AI plans. Each has its own weekly limit and its own reset time. Some capacity goes unused while another plan runs dry. This tool tells you which plan should take which job before the next reset, and can then start those jobs for you.
@@ -18,7 +20,12 @@ It has five parts, plus an opt-in upload that is off by default:
 - The **upload** (`allo-router connect`), off by default, sends summary numbers about finished jobs to the hosted dashboard at app.allorouter.com so you can see them from any browser. Nothing is sent until you run it and approve the computer. [More below](#hosted-dashboard-opt-in).
 
 ## Quickstart
-Needs Python 3.9 or newer. No dependencies. Install with `pip install .` (or `uv tool install .`) from this folder (not on PyPI yet), or run `python3 allo.py` directly.
+Needs Python 3.9 or newer. No dependencies. Not on PyPI yet; install straight from GitHub:
+
+    pip install git+https://github.com/eudotong1/allo       # or: uv tool install git+https://github.com/eudotong1/allo
+    allo-router --version                                    # allo-router 0.5.0
+
+From a checkout, `pip install .` (or `uv tool install .`) works too, or run `python3 allo.py` directly.
 
     mkdir my-router && cd my-router
     allo-router init                   # writes pools.json and tasks.json
@@ -33,7 +40,9 @@ Needs Python 3.9 or newer. No dependencies. Install with `pip install .` (or `uv
 
 Without installing, replace `allo-router` with `python3 /path/to/allo.py`.
 
-The starter files describe four example plans with made-up readings. Replace them with yours before trusting anything.
+The starter files describe four example plans with made-up readings. Replace them with yours before trusting anything. Two things you will see on a fresh `init`, both expected:
+- `Claude (personal plan)` shows `NO READING, STALE`. The starter leaves that one empty on purpose, so you can see how an unknown reading is handled: it is never guessed, and nothing runs on it until you `set` or `sync` it.
+- `allo-router sync` says no pool has a `sync` block. The starter pools have none; add `"sync": {"source": "claude"}` (or `"codex"`) to a pool to read it from your own Claude Code or Codex files ([Sync](#sync-readings-from-your-own-computer)).
 
 ### Turning on a real backend
 Every starter pool uses the `dry-run` backend, so a first `--execute` cannot start a real agent: it logs each job and starts nothing. Each starter pool also carries the command it would run, and the dry run prints it:
@@ -166,7 +175,7 @@ Off by default. app.allorouter.com shows which plan took each job, what ran, wha
 
 Once connected, `run --execute` uploads after jobs finish, at most once every 15 seconds and once at the end, and the page updates within about 15 seconds. A failed upload never fails a run.
 
-**What an upload carries, per job:** a hashed id, the minute it started, the plan as `pool-1`, `pool-2` (the names you gave your plans never leave), the plan type and provider, whether it ran, why it missed, and the estimated saving. **Never:** job names, prompts, commands, code, output, file names or paths, plan names or labels, token counts, hostnames or keys. **Only if you opt in** with `allo-router connect --share-readings on`: each plan's % or $ left, its reset time and window, when it was read, and whether `sync` read it automatically or you typed it with `set` (the dashboard then shows what is left and puts each reset on the timeline). The payload is built field by field from an allowlist and the server rejects any other field. `allo_upload.py` is the only module that opens a connection; the planner, sync, executor, report and local dashboard still open none. Every upload is logged in `~/.config/allo-router/connect.log`.
+**What an upload carries, per job:** a hashed id, the minute it started, the plan as `pool-1`, `pool-2` (the names you gave your plans never leave), the plan type and provider, a short job title (the first line of the task name, at most 48 characters), the model and effort when they are set on the pool's run command, whether it ran, why it missed, and the estimated saving. While `allo-router live` runs, it also sends the titles of the jobs the planner would run next, with the plan suggested for each. **Never:** prompts, commands, code, output, file names or paths, plan names or labels, token counts, hostnames or keys. If a task name is private, give it a neutral `name` and put the detail in its `prompt`. **Only if you opt in** with `allo-router connect --share-readings on`: each plan's % or $ left, its reset time and window, when it was read, and whether `sync` read it automatically or you typed it with `set` (the dashboard then shows what is left and puts each reset on the timeline). The payload is built field by field from an allowlist and the server rejects any other field. `allo_upload.py` is the only module that opens a connection; the planner, sync, executor, report and local dashboard still open none. Every upload is logged in `~/.config/allo-router/connect.log`.
 
 ## What it does not do
 - It does not contact any provider for usage. `sync` reads only files on your computer, and only where those files hold a limit does it record a percentage. Those formats are undocumented and may change; when they do, sync says UNAVAILABLE and you type the numbers in with `set`.
