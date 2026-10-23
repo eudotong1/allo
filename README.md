@@ -1,6 +1,6 @@
 # Allo Router
 
-[![tests](https://github.com/eudotong1/allo/actions/workflows/tests.yml/badge.svg)](https://github.com/eudotong1/allo/actions/workflows/tests.yml) [![MIT license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![MIT license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 The agent router for maximizing usage. Site: https://allorouter.com
 
