@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Docs, install and CI
+- README, allorouter.com, and the hosted sign-in, connect and dashboard pages now say what uploads actually include: a short job title (first line of the task name, at most 48 characters) plus model and effort. Before this, they said job names were never sent. `allo_upload.py` and `privacy.html` already had it right. No code change.
+- Quickstart: one-line install from GitHub (`pip install git+https://github.com/eudotong1/allo`), and a note on the two things a fresh `init` shows on purpose (the empty personal-plan reading; `sync` with no `sync` block).
+- README: MIT license badge.
 
 ### Hosted dashboard: Grok Bot pool + live running jobs
 - **Grok Bot** appears as an orchestrator plan (provider `grok`, plan type `orchestrator`): job count only, no invented %. Fed from real Chief `run.log` dispatch events.

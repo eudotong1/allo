@@ -602,7 +602,7 @@ function render() {
     ? empty()
     : queueSection(data) + (lines.length || (data.running && data.running.length) ? runningStrip(data, lines) + allocation(data, lines) + chipToggle(data) + map(data, lines, now) + jobsSection(data, lines) : `<section class="empty"><h2>No jobs in this period</h2><p class="intro">Jobs show up here after <code>run --execute</code> finishes them on a connected computer.</p></section>`) +
       tables(data, lines) + computers(data);
-  const note = `<p class="note"><b>Only job numbers, plans, outcomes and estimates reach this page.</b> Job names and everything else stay on your computer; open <code>allo-router dashboard</code> there to see them. Times are UTC.</p>`;
+  const note = `<p class="note"><b>Only short job titles, plans, outcomes and estimates reach this page.</b> Prompts, commands, output and everything else stay on your computer; open <code>allo-router dashboard</code> there to see them. Times are UTC.</p>`;
   document.getElementById("app").innerHTML = `${nav(data)}<div class="wrap">${note}${header(data, now)}${body}${about}
   <footer>
     <span class="mark ext">Allo Router</span>

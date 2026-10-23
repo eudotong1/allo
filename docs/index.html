@@ -319,7 +319,7 @@
     </div>
     <dl class="rows">
       <div><dt>Off by default</dt><dd>Without <code>allo-router connect</code>, nothing leaves your computer. <code>allo-router disconnect</code> stops uploads and deletes that computer's history there.</dd></div>
-      <div><dt>Summary numbers only</dt><dd>Per job: a hashed id, the minute it started, the plan as pool-1, pool-2, its type and provider, whether it ran, why it missed and the estimated saving. Never job names, prompts, code, commands, output, file names or paths, plan names, readings or keys.</dd></div>
+      <div><dt>Summary numbers only</dt><dd>Per job: a hashed id, the minute it started, the plan as pool-1, pool-2, its type and provider, a short job title (the first line of the task name, up to 48 characters), the model and effort set on the plan's command, whether it ran, why it missed and the estimated saving. Never prompts, code, commands, output, file names or paths, plan names or keys. Readings only if you turn them on.</dd></div>
       <div><dt>Check it first</dt><dd><code>allo-router connect --show</code> prints exactly what the next upload would send, and sends nothing. The server refuses any other field.</dd></div>
       <div><dt>Free for 100</dt><dd>Sign in with GitHub. Free for the first 100 users; after that, new sign-ins join a waitlist. The local dashboard stays free for everyone.</dd></div>
     </dl>
@@ -375,7 +375,7 @@
   <section class="part" id="quickstart">
     <div>
       <h2>Quickstart</h2>
-      <p class="intro">Needs Python 3.9 or newer and nothing else. Install with <code>pip install .</code> from a checkout (not on PyPI yet), or run <code>python3 allo.py</code> directly.</p>
+      <p class="intro">Needs Python 3.9 or newer and nothing else. Not on PyPI yet. Install from GitHub with <code>pip install git+https://github.com/eudotong1/allo</code> (or <code>pip install .</code> from a checkout), or run <code>python3 allo.py</code> directly.</p>
     </div>
     <div>
 <pre><code>mkdir my-router &amp;&amp; cd my-router

@@ -30,7 +30,7 @@
     <aside class="side">
       <p><b>What approving does.</b> This computer gets an upload token. It can add job rows to your dashboard and nothing else: it can't read anything.</p>
       <p>Each upload holds, per job: a hashed id, the minute it started, the plan as pool-1, pool-2, its type and provider, whether it ran, why it missed, and the API value (est.).</p>
-      <p class="m">Never sent: job names, prompts, code, commands, output, file names or paths, plan names or keys. Plan readings (% left, reset time) only if you turn them on with <code>allo-router connect --share-readings on</code>. <code>allo-router connect --show</code> prints the next upload without sending it; <code>allo-router disconnect</code> stops it.</p>
+      <p class="m">Sent per job: a short title (the first line of the task name, up to 48 characters), plan type and provider, model and effort, outcome and estimated saving. Never sent: prompts, code, commands, output, file names or paths, plan names or keys. Plan readings (% left, reset time) only if you turn them on with <code>allo-router connect --share-readings on</code>. <code>allo-router connect --show</code> prints the next upload without sending it; <code>allo-router disconnect</code> stops it.</p>
     </aside>
   </main>
   <footer><span class="mark">Allo Router</span><span>app.allorouter.com</span><a href="/privacy">Privacy</a></footer>
