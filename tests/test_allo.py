@@ -269,3 +269,21 @@ def test_version_is_the_same_everywhere():
     assert re.search(r'^version = "(.+)"$', (ROOT / "pyproject.toml").read_text(), re.M).group(1) == planner.__version__
     assert f"## {planner.__version__} " in (ROOT / "CHANGELOG.md").read_text()
     assert run_cli("--version").stdout.strip() == f"allo-router {planner.__version__}"
+
+
+def test_pyproject_is_ready_to_publish_as_allo_router():
+    """Metadata for the PyPI name allo-router. The README still installs from GitHub until it is published."""
+    text = (ROOT / "pyproject.toml").read_text()
+    assert 'name = "allo-router"' in text
+    assert 'version = "0.5.0"' in text
+    assert 'license = "MIT"' in text
+    assert 'readme = "README.md"' in text
+    assert "https://allorouter.com" in text
+    assert "https://github.com/eudotong1/allo" in text
+    assert 'allo-router = "allo:cli"' in text
+    assert "Programming Language :: Python :: 3" in text
+    # Current setuptools rejects this classifier once `license = "MIT"` is set, and the build fails.
+    assert "License :: OSI Approved :: MIT License" not in text
+    readme = (ROOT / "README.md").read_text()
+    assert "pip install git+https://github.com/eudotong1/allo" in readme
+    assert "pip install allo-router" not in readme

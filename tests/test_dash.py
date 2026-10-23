@@ -441,6 +441,42 @@ def test_cli_install_launcher_needs_a_config_folder(tmp_path, monkeypatch):
         allo_dash.cmd_dashboard(tmp_path, ["--install-launcher", "--example"], lambda: NOW)
 
 
+def test_dashboard_startup_line_is_flushed_when_stdout_is_piped(tmp_path):
+    """The banner is printed once, then the server blocks. Without flush=True a pipe keeps it in the block buffer."""
+    import socket
+    import subprocess
+    import threading
+    write_cfg(tmp_path, SHELL)
+    sock = socket.socket()
+    sock.bind(("127.0.0.1", 0))
+    port = sock.getsockname()[1]
+    sock.close()
+    proc = subprocess.Popen(
+        [sys.executable, str(Path(__file__).parent.parent / "allo.py"),
+         "--dir", str(tmp_path), "dashboard", "--no-open", "--port", str(port)],
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    line = {}
+
+    def read():
+        line["text"] = proc.stdout.readline()
+
+    thread = threading.Thread(target=read, daemon=True)
+    thread.start()
+    thread.join(5)
+    try:
+        assert not thread.is_alive(), "startup line stayed in the block buffer"
+        assert line["text"] == (
+            f"Allo Router dashboard on http://127.0.0.1:{port}/ "
+            "(this computer only, read-only). Ctrl-C to stop.\n")
+    finally:
+        proc.terminate()
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait(timeout=5)
+
+
 def test_landing_and_readme_feature_the_released_dashboard():
     root = Path(__file__).parent.parent
     page, readme = (root / "docs" / "index.html").read_text(), (root / "README.md").read_text()
