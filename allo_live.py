@@ -560,7 +560,7 @@ def default_router_dirs():
     return out
 
 
-def cmd_live(argv, now=None, transport=up.http, out=print, spawn=None):
+def cmd_live(argv, now=None, transport=up.http, out=allo.say, spawn=None):
     ap = argparse.ArgumentParser(prog="allo-router live", description="Upload live lane / Grok dispatch events")
     ap.add_argument("--watch", action="store_true", help="poll until interrupted")
     ap.add_argument("--every", type=float, default=4.0, help="seconds between polls in --watch (default 4)")

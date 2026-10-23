@@ -552,7 +552,7 @@ def respond(method, path, host, port, state_fn, fonts=FONTS):
     return 404, "text/plain; charset=utf-8", b"Not found.\n"
 
 
-def serve(port, state_fn, out=print, open_browser=False):
+def serve(port, state_fn, out=allo.say, open_browser=False):
     from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
     class Handler(BaseHTTPRequestHandler):
@@ -596,6 +596,7 @@ def serve(port, state_fn, out=print, open_browser=False):
         if open_browser:
             webbrowser.open(url)
         return 0
+    # allo.say (the default) passes flush=True. The server stays up after this line, so a pipe must see it now.
     out(f"Allo Router dashboard on {url} (this computer only, read-only). Ctrl-C to stop.")
     if open_browser:
         webbrowser.open(url)
@@ -692,7 +693,7 @@ def install_launcher(here, port=DEFAULT_PORT, platform=None, home=None, argv=Non
     raise ValueError(f"no launcher for {platform} yet; run `allo-router --dir {folder} dashboard` instead")
 
 
-def cmd_dashboard(here, argv, now_fn, out=print):
+def cmd_dashboard(here, argv, now_fn, out=allo.say):
     ap = argparse.ArgumentParser(prog="allo-router dashboard", description="Serve a read-only local page showing "
                                  "plans, the queue, the schedule and what ran, on 127.0.0.1 only, and open it "
                                  "in your browser.")

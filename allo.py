@@ -37,6 +37,16 @@ __version__ = "0.5.0"
 STALE_H = 24
 RECURRING = ("daily", "weekly")
 
+
+def say(text=""):
+    """Print one line and flush it.
+
+    dashboard, live --watch and connect print a line and then sit there. When stdout is not a terminal
+    it is block-buffered, so that line never shows up under a pipe, timeout, or launcher log.
+    """
+    print(text, flush=True)
+
+
 # Starter files written by `allo-router init`. Kept in code so a pip install works without extra data files.
 # Every starter pool uses the dry-run backend, so a first `run --execute` cannot start a real agent.
 # The command each pool would run is shown in the dry run; switch "backend" to "shell" to opt in.

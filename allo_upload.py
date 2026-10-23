@@ -545,7 +545,7 @@ class AfterJobs:
 
 # ---------- commands ----------
 
-def cmd_connect(here, argv, now, transport=http, out=print, err=None, sleep=time.sleep, open_url=None):
+def cmd_connect(here, argv, now, transport=http, out=allo.say, err=None, sleep=time.sleep, open_url=None):
     err = err or (lambda s: print(s, file=sys.stderr))
     ap = argparse.ArgumentParser(prog="allo-router connect", description="Opt in to the hosted dashboard: approve "
                                  "this computer once in the browser. Uploads stay off until you do.")
