@@ -284,6 +284,9 @@ def test_pyproject_is_ready_to_publish_as_allo_router():
     assert "Programming Language :: Python :: 3" in text
     # Current setuptools rejects this classifier once `license = "MIT"` is set, and the build fails.
     assert "License :: OSI Approved :: MIT License" not in text
+    # SPDX license expressions are canonicalized via packaging.licenses (packaging>=24.2).
+    # Without it on the build path, `pip wheel` dies in metadata generation.
+    assert "packaging>=24.2" in text
     readme = (ROOT / "README.md").read_text()
     assert "pip install git+https://github.com/eudotong1/allo" in readme
     assert "pip install allo-router" not in readme

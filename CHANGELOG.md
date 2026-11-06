@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### Tests and packaging
+- Offline end-to-end tests run the real `allo.py` entry point in a temp folder: `init`, `run` (preview and `--execute` of a saved plan), status via `report` and `dashboard --json`, and the error paths (missing files, bad JSON, a refused plan, a failed job). They stay offline. See [E2E.md](E2E.md).
+- Local packaging check: build a wheel with no index and no build isolation, install it into a temp prefix, and run `allo-router --help`. Nothing is uploaded.
+- Build requires `packaging>=24.2` as well as `setuptools>=77`. The SPDX license expression `MIT` is canonicalized with `packaging.licenses`, and a packaging older than 24.2 (the copy on Ubuntu 24.04) makes metadata generation fail.
+
 ### Docs, install and CI
 - README, allorouter.com, and the hosted sign-in, connect and dashboard pages now say what uploads actually include: a short job title (first line of the task name, at most 48 characters) plus model and effort. Before this, they said job names were never sent. `allo_upload.py` and `privacy.html` already had it right. No code change.
 - Quickstart: one-line install from GitHub (`pip install git+https://github.com/eudotong1/allo`), and a note on the two things a fresh `init` shows on purpose (the empty personal-plan reading; `sync` with no `sync` block).
