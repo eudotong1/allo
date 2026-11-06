@@ -195,6 +195,6 @@ Once connected, `run --execute` uploads after jobs finish, at most once every 15
 
 or, with uv and no install: `uvx --python 3.12 pytest -q tests`.
 
-Tests never use the network: a fixture blocks sockets, the shell backend is exercised with small local Python commands, and the upload tests stub the transport.
+Tests never use the network: a fixture blocks sockets, the shell backend is exercised with small local Python commands, and the upload tests stub the transport. [E2E.md](E2E.md) covers the offline end-to-end run of the real entry point and the local packaging check.
 
 The hosted dashboard's server has its own tests: `cd hosted/worker && npm install && npm test`. See [plans/hosted/README.md](plans/hosted/README.md) to run it locally.
